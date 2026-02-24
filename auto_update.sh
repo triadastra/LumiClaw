@@ -64,7 +64,8 @@ PLIST
 
 cp "$BINARY_SRC" "$BINARY_DST"
 
-# Copy app icon to Resources
+# Copy app icon files to Resources
+cp "$SCRIPT_DIR/icons/AppIcon.icns" "$APP_BUNDLE/Contents/Resources/AppIcon.icns" 2>/dev/null || true
 cp "$SCRIPT_DIR/icons/appicon.png" "$APP_BUNDLE/Contents/Resources/AppIcon.png" 2>/dev/null || true
 
 # ── 4. Sign ───────────────────────────────────────────────────────────────────

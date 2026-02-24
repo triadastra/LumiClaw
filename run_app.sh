@@ -22,6 +22,7 @@ echo "📦 Assembling .app bundle..."
 mkdir -p "$APP_BUNDLE/Contents/MacOS"
 mkdir -p "$APP_BUNDLE/Contents/Resources"
 cp "$SCRIPT_DIR/.build/debug/LumiAgent" "$BINARY_DST"
+cp "$SCRIPT_DIR/icons/AppIcon.icns" "$APP_BUNDLE/Contents/Resources/AppIcon.icns" 2>/dev/null || true
 cp "$SCRIPT_DIR/icons/appicon.png" "$APP_BUNDLE/Contents/Resources/AppIcon.png" 2>/dev/null || true
 
 # ── 3. Sign ───────────────────────────────────────────────────────────────────

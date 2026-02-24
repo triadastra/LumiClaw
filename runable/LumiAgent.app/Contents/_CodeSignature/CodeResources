@@ -4,6 +4,10 @@
 <dict>
 	<key>files</key>
 	<dict>
+		<key>Resources/AppIcon.icns</key>
+		<data>
+		VfGjsAkFbAtRX84WdichYqGx6QA=
+		</data>
 		<key>Resources/AppIcon.png</key>
 		<data>
 		V3x2JT4SvEA8/von2c+bvw/OU2E=
@@ -11,6 +15,13 @@
 	</dict>
 	<key>files2</key>
 	<dict>
+		<key>Resources/AppIcon.icns</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			br8zliaDqQswIOHyoIyCipprz1bygscy2M7R2F3zY5Y=
+			</data>
+		</dict>
 		<key>Resources/AppIcon.png</key>
 		<dict>
 			<key>hash2</key>
