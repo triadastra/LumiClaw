@@ -153,6 +153,21 @@ In a direct message, click the **Agent Mode** button in the chat header. The age
 
 ---
 
+## Wiki Pages (In-Repo)
+
+Documentation is also available in the `wiki/` folder:
+
+- `wiki/Home.md`
+- `wiki/Installation-and-Build.md`
+- `wiki/Settings-and-Permissions.md`
+- `wiki/Agent-Space-and-Chat.md`
+- `wiki/Quick-Actions-Overlay.md`
+- `wiki/Voice-Mode.md`
+- `wiki/Auto-Update-and-Deployment.md`
+- `wiki/Troubleshooting.md`
+
+---
+
 ## Architecture
 
 ```

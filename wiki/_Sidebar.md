@@ -1,0 +1,8 @@
+- [Home](Home)
+- [Installation & Build](Installation-and-Build)
+- [Settings & Permissions](Settings-and-Permissions)
+- [Agent Space & Chat](Agent-Space-and-Chat)
+- [Quick Actions Overlay](Quick-Actions-Overlay)
+- [Voice Mode](Voice-Mode)
+- [Auto Update & Deployment](Auto-Update-and-Deployment)
+- [Troubleshooting](Troubleshooting)
