@@ -12,6 +12,28 @@ import SwiftUI
 
 // MARK: - Quick Action Types
 
+// MARK: - App Detection
+
+func isIWorkApp() -> Bool {
+    let iworkBundleIds = [
+        "com.apple.iwork.pages",
+        "com.apple.iwork.numbers",
+        "com.apple.iwork.keynote",
+        "com.apple.motionapp",
+        "com.apple.finalcutpro",
+        "com.apple.logicpro",
+        "com.pixelmator.pixelmator-pro",
+        "com.apple.compressor",
+        "com.apple.mainstage",
+    ]
+
+    let workspace = NSWorkspace.shared
+    if let frontmost = workspace.frontmostApplication {
+        return iworkBundleIds.contains(frontmost.bundleIdentifier ?? "")
+    }
+    return false
+}
+
 enum QuickActionType: String, CaseIterable {
     case analyzePage
     case thinkAndWrite
@@ -42,6 +64,11 @@ enum QuickActionType: String, CaseIterable {
         case .writeNew:
             return "Look at this page and write appropriate new content using type_text"
         }
+    }
+
+    static var visibleCases: [QuickActionType] {
+        // Only show "Write New" for iWork apps
+        isIWorkApp() ? [.analyzePage, .thinkAndWrite, .writeNew] : [.analyzePage, .thinkAndWrite]
     }
 }
 
@@ -129,13 +156,19 @@ final class QuickActionPanelController: NSObject {
     }
 }
 
+// MARK: - Agent Reply Bubble Model
+
+class AgentReplyBubbleModel: NSObject, ObservableObject {
+    @Published var text: String = ""
+}
+
 // MARK: - Agent Reply Bubble Controller
 
 final class AgentReplyBubbleController: NSObject {
     static let shared = AgentReplyBubbleController()
 
     private var panel: NSPanel?
-    private var dismissTimer: Timer?
+    private var bubbleModel: AgentReplyBubbleModel?
 
     func show(initialText: String = "") {
         guard panel == nil else { return }
@@ -150,17 +183,22 @@ final class AgentReplyBubbleController: NSObject {
         } completionHandler: { [weak self] in
             self?.panel?.orderOut(nil)
             self?.panel = nil
+            self?.bubbleModel = nil
         }
     }
 
     func updateText(_ text: String) {
-        guard let panel = panel,
-              let hosting = panel.contentView as? NSHostingView<AgentReplyBubbleView> else { return }
-        hosting.rootView.updateText(text)
+        DispatchQueue.main.async { [weak self] in
+            self?.bubbleModel?.text = text
+        }
     }
 
     private func createPanel(initialText: String) {
-        let bubbleView = AgentReplyBubbleView(text: initialText)
+        let model = AgentReplyBubbleModel()
+        model.text = initialText
+        self.bubbleModel = model
+
+        let bubbleView = AgentReplyBubbleView(model: model)
         let hosting = NSHostingView(rootView: bubbleView)
         hosting.setFrameSize(NSSize(width: 320, height: 200))
 
@@ -211,7 +249,7 @@ struct QuickActionPanelView: View {
                 .padding(.top, 16)
                 .padding(.bottom, 12)
 
-            ForEach(Array(QuickActionType.allCases.enumerated()), id: \.element) { index, action in
+            ForEach(Array(QuickActionType.visibleCases.enumerated()), id: \.element) { index, action in
                 if index > 0 {
                     Divider().padding(.horizontal, 16)
                 }
@@ -285,11 +323,7 @@ struct QuickActionButton: View {
 // MARK: - Agent Reply Bubble View
 
 struct AgentReplyBubbleView: View {
-    @State var text: String
-
-    func updateText(_ newText: String) {
-        text = newText
-    }
+    @ObservedObject var model: AgentReplyBubbleModel
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -301,10 +335,16 @@ struct AgentReplyBubbleView: View {
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(.primary)
                 Spacer()
+                Button(action: { AgentReplyBubbleController.shared.hide() }) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
             }
 
             ScrollView {
-                Text(text)
+                Text(model.text)
                     .font(.system(size: 11))
                     .foregroundStyle(.primary)
                     .lineLimit(nil)
