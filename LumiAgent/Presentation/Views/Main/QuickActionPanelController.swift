@@ -164,6 +164,16 @@ final class QuickActionPanelController: NSObject {
 
 class AgentReplyBubbleModel: NSObject, ObservableObject {
     @Published var text: String = ""
+    @Published var userInput: String = ""
+    @Published var toolCalls: [String] = []
+    @Published var isStreaming = false
+
+    func addToolCall(_ toolName: String, args: [String: String]) {
+        let argStr = args.map { "\($0.key): \($0.value)" }.joined(separator: ", ")
+        DispatchQueue.main.async {
+            self.toolCalls.append("🔧 \(toolName)(\(argStr))")
+        }
+    }
 }
 
 // MARK: - Agent Reply Bubble Controller
@@ -173,6 +183,7 @@ final class AgentReplyBubbleController: NSObject {
 
     private var panel: NSPanel?
     private var bubbleModel: AgentReplyBubbleModel?
+    private var hosting: NSHostingView<AgentReplyBubbleView>?
 
     func show(initialText: String = "") {
         guard panel == nil else { return }
@@ -188,13 +199,49 @@ final class AgentReplyBubbleController: NSObject {
             self?.panel?.orderOut(nil)
             self?.panel = nil
             self?.bubbleModel = nil
+            self?.hosting = nil
         }
     }
 
     func updateText(_ text: String) {
         DispatchQueue.main.async { [weak self] in
             self?.bubbleModel?.text = text
+            self?.resizePanel()
         }
+    }
+
+    func addToolCall(_ toolName: String, args: [String: String]) {
+        bubbleModel?.addToolCall(toolName, args: args)
+        resizePanel()
+    }
+
+    private func resizePanel() {
+        guard let panel, let hosting else { return }
+
+        // Calculate new height based on content
+        let contentHeight = calculateContentHeight()
+        let newHeight = min(contentHeight + 100, 600) // Max height 600px
+
+        DispatchQueue.main.async {
+            hosting.setFrameSize(NSSize(width: 360, height: newHeight))
+
+            let screen = NSScreen.main?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
+            let newOrigin = NSPoint(
+                x: screen.maxX - 360 - 16,
+                y: screen.maxY - newHeight - 16
+            )
+
+            panel.setFrame(NSRect(origin: newOrigin, size: NSSize(width: 360, height: newHeight)), display: true)
+        }
+    }
+
+    private func calculateContentHeight() -> CGFloat {
+        guard let model = bubbleModel else { return 200 }
+
+        let textHeight = CGFloat(max(40, model.text.count / 40 * 20))
+        let toolCallsHeight = CGFloat(model.toolCalls.count * 20)
+
+        return textHeight + toolCallsHeight + 60
     }
 
     private func createPanel(initialText: String) {
@@ -202,12 +249,13 @@ final class AgentReplyBubbleController: NSObject {
         model.text = initialText
         self.bubbleModel = model
 
-        let bubbleView = AgentReplyBubbleView(model: model)
+        let bubbleView = AgentReplyBubbleView(model: model, controller: self)
         let hosting = NSHostingView(rootView: bubbleView)
-        hosting.setFrameSize(NSSize(width: 320, height: 200))
+        hosting.setFrameSize(NSSize(width: 360, height: 250))
+        self.hosting = hosting
 
         let p = NSPanel(
-            contentRect: NSRect(origin: .zero, size: NSSize(width: 320, height: 200)),
+            contentRect: NSRect(origin: .zero, size: NSSize(width: 360, height: 250)),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -224,8 +272,8 @@ final class AgentReplyBubbleController: NSObject {
         let sf = screen.visibleFrame
         // Upper right corner, with padding
         let origin = NSPoint(
-            x: sf.maxX - 320 - 16,
-            y: sf.maxY - 200 - 16
+            x: sf.maxX - 360 - 16,
+            y: sf.maxY - 250 - 16
         )
         p.setFrameOrigin(origin)
         p.alphaValue = 0
@@ -328,9 +376,11 @@ struct QuickActionButton: View {
 
 struct AgentReplyBubbleView: View {
     @ObservedObject var model: AgentReplyBubbleModel
+    let controller: AgentReplyBubbleController?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 8) {
+            // Header
             HStack(spacing: 8) {
                 Image(systemName: "sparkles")
                     .font(.system(size: 14, weight: .semibold))
@@ -347,16 +397,52 @@ struct AgentReplyBubbleView: View {
                 .buttonStyle(.plain)
             }
 
+            Divider()
+
+            // Main content scroll area
             ScrollView {
-                Text(model.text)
+                VStack(alignment: .leading, spacing: 8) {
+                    // Agent message
+                    Text(model.text)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.primary)
+                        .lineLimit(nil)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    // Tool calls stream
+                    if !model.toolCalls.isEmpty {
+                        Divider()
+                            .padding(.vertical, 4)
+                        VStack(alignment: .leading, spacing: 4) {
+                            ForEach(model.toolCalls, id: \.self) { toolCall in
+                                Text(toolCall)
+                                    .font(.system(size: 10, design: .monospaced))
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+            }
+
+            Divider()
+
+            // Input field for user response
+            HStack(spacing: 8) {
+                TextField("Type response...", text: $model.userInput)
                     .font(.system(size: 11))
-                    .foregroundStyle(.primary)
-                    .lineLimit(nil)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textFieldStyle(.roundedBorder)
+
+                Button(action: { sendUserInput() }) {
+                    Image(systemName: "arrow.up.circle.fill")
+                        .font(.system(size: 20))
+                        .foregroundStyle(model.userInput.isEmpty ? Color.secondary : Color.accentColor)
+                }
+                .buttonStyle(.plain)
+                .disabled(model.userInput.isEmpty)
             }
         }
         .padding(12)
-        .frame(width: 320, height: 200)
+        .frame(minWidth: 360, maxWidth: 360)
         .background(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .fill(.ultraThickMaterial)
@@ -365,6 +451,12 @@ struct AgentReplyBubbleView: View {
                         .stroke(Color.white.opacity(0.2), lineWidth: 1)
                 )
         )
+    }
+
+    private func sendUserInput() {
+        model.userInput = ""
+        // TODO: Send user input to agent
+        // This will be connected to the agent response handler
     }
 }
 #endif

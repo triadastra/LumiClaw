@@ -371,8 +371,8 @@ class AppState: ObservableObject {
         let activeApp = getActiveApplication()
 
         if isIWorkApp(bundleId: activeApp) {
-            let docInfo = await getIWorkDocumentInfo()
-            let iworkContext = buildIWorkContext(app: activeApp, docInfo: docInfo, actionType: type)
+            let (docInfo, docContent) = await getIWorkDocumentInfo()
+            let iworkContext = buildIWorkContext(app: activeApp, docInfo: docInfo, docContent: docContent, actionType: type)
             let enhancedPrompt = type.prompt + "\n\n" + iworkContext
             return (enhancedPrompt, iworkContext)
         }
@@ -400,9 +400,9 @@ class AppState: ObservableObject {
         return iworkBundleIds.contains(bundleId)
     }
 
-    /// Get info about the active iWork document.
-    private func getIWorkDocumentInfo() async -> String {
-        let script = """
+    /// Get info and full text content from the active iWork document.
+    private func getIWorkDocumentInfo() async -> (info: String, content: String) {
+        let infoScript = """
         tell application "System Events"
             set frontmostApp to name of (first application process whose frontmost is true)
         end tell
@@ -442,49 +442,125 @@ class AppState: ObservableObject {
         end if
         """
 
+        let contentScript = """
+        tell application "System Events"
+            set frontmostApp to name of (first application process whose frontmost is true)
+        end tell
+
+        if frontmostApp contains "Pages" then
+            tell application "Pages"
+                if (count of documents) > 0 then
+                    set activeDoc to document 1
+                    set allText to text of activeDoc
+                    return allText
+                else
+                    return "No content"
+                end if
+            end tell
+        else if frontmostApp contains "Numbers" then
+            tell application "Numbers"
+                if (count of documents) > 0 then
+                    set activeDoc to document 1
+                    set allText to text of activeDoc
+                    return allText
+                else
+                    return "No content"
+                end if
+            end tell
+        else if frontmostApp contains "Keynote" then
+            return "(Keynote presentations cannot be easily extracted as text)"
+        else
+            return "Unknown content"
+        end if
+        """
+
+        var info = "Unknown"
+        var content = ""
+
         do {
-            return try await ScreenControlTools.runAppleScript(script: script)
+            info = try await ScreenControlTools.runAppleScript(script: infoScript)
+            content = try await ScreenControlTools.runAppleScript(script: contentScript)
         } catch {
-            return "Could not get iWork document info"
+            info = "Could not get iWork document info"
+            content = ""
         }
+
+        return (info, content)
     }
 
     /// Build iWork-specific context message for the agent.
-    private func buildIWorkContext(app: String, docInfo: String, actionType: QuickActionType) -> String {
+    private func buildIWorkContext(app: String, docInfo: String, docContent: String, actionType: QuickActionType) -> String {
         let appName = app.contains("Keynote") ? "Keynote" :
                      app.contains("Numbers") ? "Numbers" : "Pages"
+
+        let contentSection = !docContent.isEmpty && docContent != "(Keynote presentations cannot be easily extracted as text)" && docContent != "No content"
+            ? """
+
+            ═══ DOCUMENT CONTENT ═══
+            \(docContent.prefix(5000))
+            \(docContent.count > 5000 ? "\n... (content truncated)" : "")
+            """
+            : ""
 
         switch actionType {
         case .analyzePage:
             return """
             You are working with \(appName). \(docInfo)
-            Analyze the document content and structure shown in the screenshot.
+
+            ═══ TASK: PROOFREAD AND FIX ═══
+            Review the entire document content below for:
+            1. TYPOS and spelling errors
+            2. GRAMMAR issues and awkward phrasing
+            3. WEIRD or out-of-place words that don't fit
+            4. FORMATTING inconsistencies
+            5. CLARITY improvements
+
+            If you find issues:
+            - Use iwork_replace_text to fix typos and grammar
+            - Use iwork_write_text to add clarifications or rephrase awkward sections
+            - Suggest any other improvements
+            \(contentSection)
+
+            IMPORTANT: Be thorough and fix all issues you find.
             """
 
         case .thinkAndWrite:
             return """
             You are working with \(appName). \(docInfo)
-            Look at the document, understand its current content and structure, then:
-            1. Analyze the context and what should be added or modified
-            2. Use iwork_write_text tool to add new content at the cursor
-            3. Or use iwork_replace_text to modify existing text if needed
-            4. Or use iwork_insert_after_anchor to add content at specific locations
 
-            IMPORTANT: Use the iWork tools (iwork_write_text, iwork_replace_text, iwork_insert_after_anchor)
-            to directly manipulate the document. This is more reliable than mouse/keyboard control.
+            ═══ TASK: EDIT AND IMPROVE ═══
+            Review the document content and:
+            1. Identify any typos, grammar errors, or unclear passages
+            2. Fix them using the iWork tools
+            3. Suggest improvements to clarity and flow
+            4. Use iwork_replace_text, iwork_write_text, or iwork_insert_after_anchor as needed
+
+            TOOLS AVAILABLE:
+            - iwork_replace_text: Find and fix specific text
+            - iwork_write_text: Add or rewrite content
+            - iwork_insert_after_anchor: Insert text after a specific location
+            \(contentSection)
+
+            Be proactive and fix issues directly without asking for permission.
             """
 
         case .writeNew:
             return """
             You are working with \(appName). \(docInfo)
-            The user wants you to create new content for this document.
 
-            Use the iWork tools to add content:
-            - iwork_write_text: Write new text to the document
-            - iwork_insert_after_anchor: Find a specific location and add content after it
-            - iwork_replace_text: Replace specific text if needed
+            ═══ TASK: REVIEW AND ENHANCE ═══
+            Read the current content and:
+            1. Check for any spelling, grammar, or clarity issues
+            2. Identify opportunities to enhance or expand the content
+            3. Use the iWork tools to make improvements:
+               - iwork_replace_text: Fix errors and improve wording
+               - iwork_write_text: Add new content
+               - iwork_insert_after_anchor: Insert content at specific locations
 
-            Suggest improvements to the document structure and use the iWork tools to implement them.
+            Make it the best version possible.
+            \(contentSection)
+
+            Fix all issues you find automatically.
             """
         }
     }
@@ -1009,6 +1085,11 @@ class AppState: ObservableObject {
                         if Task.isCancelled { break }
 
                         let result: String
+                        // Stream tool call to reply bubble
+                        DispatchQueue.main.async {
+                            AgentReplyBubbleController.shared.addToolCall(toolCall.name, args: toolCall.arguments)
+                        }
+
                         #if os(macOS)
                         if toolCall.name == "update_self" {
                             result = applySelfUpdate(toolCall.arguments, agentId: agent.id)
