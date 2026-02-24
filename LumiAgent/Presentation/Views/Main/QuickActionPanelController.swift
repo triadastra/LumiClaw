@@ -16,20 +16,24 @@ import SwiftUI
 
 func isIWorkApp() -> Bool {
     let iworkBundleIds = [
-        "com.apple.iwork.pages",
-        "com.apple.iwork.numbers",
-        "com.apple.iwork.keynote",
-        "com.apple.motionapp",
+        "com.apple.iWork.Pages",
+        "com.apple.iWork.Numbers",
+        "com.apple.iWork.Keynote",
+        "com.apple.creativestudio.keynote",  // New Keynote from Apple Creator Studio
+        "com.apple.Motion",
         "com.apple.finalcutpro",
         "com.apple.logicpro",
         "com.pixelmator.pixelmator-pro",
         "com.apple.compressor",
-        "com.apple.mainstage",
+        "com.apple.MainStage",
     ]
 
     let workspace = NSWorkspace.shared
     if let frontmost = workspace.frontmostApplication {
-        return iworkBundleIds.contains(frontmost.bundleIdentifier ?? "")
+        let bundleId = frontmost.bundleIdentifier ?? ""
+        let isMatch = iworkBundleIds.contains(bundleId)
+        print("[AppDetect] Frontmost: \(frontmost.localizedName ?? "unknown") (\(bundleId)) - iWork: \(isMatch)")
+        return isMatch
     }
     return false
 }

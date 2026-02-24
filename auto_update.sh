@@ -64,6 +64,9 @@ PLIST
 
 cp "$BINARY_SRC" "$BINARY_DST"
 
+# Copy app icon to Resources
+cp "$SCRIPT_DIR/icons/appicon.png" "$APP_BUNDLE/Contents/Resources/AppIcon.png" 2>/dev/null || true
+
 # ── 4. Sign ───────────────────────────────────────────────────────────────────
 # Prefer a real Apple Development identity (needed for HealthKit via launchd).
 # If none exists, fall back to ad-hoc and launch the binary directly to bypass

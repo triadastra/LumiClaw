@@ -59,5 +59,9 @@
     <!-- Principle Class -->
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
+
+    <!-- App Icon -->
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
 </dict>
 </plist>
