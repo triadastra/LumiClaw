@@ -93,6 +93,7 @@ struct AgentDetailView: View {
 // MARK: - Read-Only View
 
 private struct ReadOnlyView: View {
+    @EnvironmentObject var appState: AppState
     let agent: Agent
 
     var body: some View {
@@ -100,8 +101,24 @@ private struct ReadOnlyView: View {
             // Header
             HStack {
                 VStack(alignment: .leading) {
-                    Text(agent.name)
-                        .font(.largeTitle)
+                    HStack(spacing: 8) {
+                        Text(agent.name)
+                            .font(.largeTitle)
+                        
+                        Button {
+                            if appState.isDefaultAgent(agent.id) {
+                                appState.setDefaultAgent(nil)
+                            } else {
+                                appState.setDefaultAgent(agent.id)
+                            }
+                        } label: {
+                            Image(systemName: appState.isDefaultAgent(agent.id) ? "star.fill" : "star")
+                                .foregroundStyle(appState.isDefaultAgent(agent.id) ? .yellow : .secondary)
+                                .font(.title2)
+                        }
+                        .buttonStyle(.plain)
+                        .help(appState.isDefaultAgent(agent.id) ? "Primary agent for global shortcuts" : "Set as primary agent for global shortcuts")
+                    }
                     Text("Powered by \(agent.configuration.provider.rawValue)")
                         .font(.title3)
                         .foregroundStyle(.secondary)
@@ -178,6 +195,7 @@ private struct ReadOnlyView: View {
 // MARK: - Edit Form
 
 private struct EditForm: View {
+    @EnvironmentObject var appState: AppState
     @Binding var draft: Agent
 
     @State private var availableModels: [String] = []
@@ -224,6 +242,16 @@ private struct EditForm: View {
                             }
                         }
                     }
+
+                    Toggle("Primary for Global Shortcuts", isOn: Binding(
+                        get: { appState.isDefaultAgent(draft.id) },
+                        set: { on in
+                            if on { appState.setDefaultAgent(draft.id) }
+                            else if appState.isDefaultAgent(draft.id) { appState.setDefaultAgent(nil) }
+                        }
+                    ))
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
                 }
                 .padding(.vertical, 8)
             }

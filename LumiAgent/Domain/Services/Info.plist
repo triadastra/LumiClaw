@@ -40,6 +40,9 @@
     
     <key>NSMicrophoneUsageDescription</key>
     <string>LumiAgent may need microphone access for voice-based features.</string>
+
+    <key>NSCameraUsageDescription</key>
+    <string>LumiAgent may use camera access for vision-based features you enable.</string>
     
     <!-- App Capabilities -->
     <key>LSMinimumSystemVersion</key>

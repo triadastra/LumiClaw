@@ -22,12 +22,12 @@ struct LumiAgentCommands: Commands {
             Button("Open Agent Palette") {
                 appState.toggleCommandPalette()
             }
-            .keyboardShortcut("l", modifiers: [.option, .command])
+            .keyboardShortcut("l", modifiers: .command)
 
             Button("Quick Actions") {
                 appState.toggleQuickActionPanel()
             }
-            .keyboardShortcut("l", modifiers: .control)
+            .keyboardShortcut("l", modifiers: [.option, .command])
         }
 
         // View Menu

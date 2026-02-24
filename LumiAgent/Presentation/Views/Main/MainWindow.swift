@@ -48,26 +48,12 @@ struct MainWindow: View {
                 }
                 .disabled(!executionEngine.isExecuting)
                 .help("Stop execution")
-
-                Divider()
-
-                Button {
-                    appState.showingSettings = true
-                } label: {
-                    Label("Settings", systemImage: "gear")
-                }
-                .help("Open settings")
             }
         }
         .sheet(isPresented: $appState.showingNewAgent) {
             NewAgentView()
                 .environmentObject(appState)
                 .frame(minWidth: 500, minHeight: 400)
-        }
-        .sheet(isPresented: $appState.showingSettings) {
-            SettingsView()
-                .environmentObject(appState)
-                .frame(minWidth: 600, minHeight: 500)
         }
         .environmentObject(executionEngine)
         .focusedSceneValue(\.executionEngine, executionEngine)

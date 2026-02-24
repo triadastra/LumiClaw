@@ -16,13 +16,227 @@ struct SettingsView: View {
             APIKeysTab()
                 .tabItem { Label("API Keys", systemImage: "key.fill") }
 
+            PermissionsTab()
+                .tabItem { Label("Permissions", systemImage: "lock.shield.fill") }
+
             SecurityTab()
                 .tabItem { Label("Security", systemImage: "shield.fill") }
 
             AboutTab()
                 .tabItem { Label("About", systemImage: "info.circle.fill") }
         }
-        .frame(width: 560, height: 460)
+        .frame(width: 560, height: 520)
+    }
+}
+
+// MARK: - Permissions Tab
+
+struct PermissionsTab: View {
+    @StateObject private var permissionManager = SystemPermissionManager.shared
+    @State private var timer: Timer?
+
+    var body: some View {
+        Form {
+            Section {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("System Access")
+                        .font(.headline)
+                    Text("Lumi Agent requires these system-level permissions to control your Mac, see the screen, and manage files. macOS security requires you to enable these manually in System Settings.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.vertical, 4)
+            }
+
+            Section("Quick Setup") {
+                Button {
+                    permissionManager.requestFullAccess()
+                } label: {
+                    Label("Enable Full Access (Guided)", systemImage: "shield.lefthalf.filled.badge.checkmark")
+                        .font(.system(size: 13, weight: .semibold))
+                }
+                .buttonStyle(.borderedProminent)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                Text("Opens each required macOS privacy pane and triggers prompts where available. Review and enable Lumi Agent in each pane.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Accessibility") {
+                PermissionRow(
+                    title: "Mouse & Keyboard Control",
+                    description: "Required for Agent Mode to interact with other apps.",
+                    isGranted: permissionManager.isAccessibilityGranted,
+                    onAction: { permissionManager.requestAccessibility() }
+                )
+            }
+
+            Section("Screen Recording") {
+                PermissionRow(
+                    title: "Vision & Screenshots",
+                    description: "Required for agents to see what's on your screen.",
+                    isGranted: permissionManager.isScreenRecordingGranted,
+                    onAction: { permissionManager.requestScreenRecording() }
+                )
+            }
+
+            Section("Microphone & Camera") {
+                PermissionRow(
+                    title: "Microphone",
+                    description: "Required for voice features and audio capture.",
+                    isGranted: permissionManager.isMicrophoneGranted,
+                    onAction: { permissionManager.requestMicrophone() }
+                )
+
+                PermissionRow(
+                    title: "Camera",
+                    description: "Required for camera-based features and visual inputs.",
+                    isGranted: permissionManager.isCameraGranted,
+                    onAction: { permissionManager.requestCamera() }
+                )
+            }
+
+            Section("Automation & Input Monitoring") {
+                ManualPermissionRow(
+                    title: "Automation",
+                    description: "Allows controlling other apps through Apple Events.",
+                    onAction: { permissionManager.requestAutomation() }
+                )
+
+                ManualPermissionRow(
+                    title: "Input Monitoring",
+                    description: "Required for secure key and event monitoring workflows.",
+                    onAction: { permissionManager.requestInputMonitoring() }
+                )
+            }
+
+            Section("Full Disk Access") {
+                PermissionRow(
+                    title: "Filesystem Mastery",
+                    description: "Allows agents to read and write files in restricted folders (Mail, Messages, etc.).",
+                    isGranted: permissionManager.isFullDiskAccessGranted,
+                    onAction: { permissionManager.requestFullDiskAccess() }
+                )
+            }
+
+            Section("Privileged Helper") {
+                PermissionRow(
+                    title: "Sudo Helper",
+                    description: "Enables root-level operations (sudo) without constant password prompts.",
+                    isGranted: permissionManager.isHelperInstalled,
+                    onAction: { permissionManager.installHelper() }
+                )
+            }
+
+            Section {
+                Button {
+                    permissionManager.refreshAll()
+                } label: {
+                    Label("Check Status Again", systemImage: "arrow.clockwise")
+                }
+                .frame(maxWidth: .infinity)
+            }
+        }
+        .formStyle(.grouped)
+        .onAppear {
+            permissionManager.refreshAll()
+            // Auto-refresh every 2 seconds while this tab is visible
+            timer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { _ in
+                Task { @MainActor in
+                    permissionManager.refreshAll()
+                }
+            }
+        }
+        .onDisappear {
+            timer?.invalidate()
+            timer = nil
+        }
+    }
+}
+
+struct PermissionRow: View {
+    let title: String
+    let description: String
+    let isGranted: Bool
+    let onAction: () -> Void
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            ZStack {
+                Circle()
+                    .fill(isGranted ? Color.green.opacity(0.15) : Color.orange.opacity(0.15))
+                    .frame(width: 32, height: 32)
+                Image(systemName: isGranted ? "checkmark.shield.fill" : "exclamationmark.shield.fill")
+                    .foregroundStyle(isGranted ? .green : .orange)
+                    .font(.system(size: 16, weight: .semibold))
+            }
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 13, weight: .medium))
+                Text(description)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            if isGranted {
+                Text("Enabled")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.green)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.green.opacity(0.1))
+                    .clipShape(Capsule())
+            } else {
+                Button(action: onAction) {
+                    Text("Grant Access")
+                        .font(.system(size: 12, weight: .medium))
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+}
+
+struct ManualPermissionRow: View {
+    let title: String
+    let description: String
+    let onAction: () -> Void
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            ZStack {
+                Circle()
+                    .fill(Color.blue.opacity(0.15))
+                    .frame(width: 32, height: 32)
+                Image(systemName: "gearshape.2.fill")
+                    .foregroundStyle(.blue)
+                    .font(.system(size: 16, weight: .semibold))
+            }
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 13, weight: .medium))
+                Text(description)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            Button(action: onAction) {
+                Text("Open Settings")
+                    .font(.system(size: 12, weight: .medium))
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+        }
+        .padding(.vertical, 4)
     }
 }
 

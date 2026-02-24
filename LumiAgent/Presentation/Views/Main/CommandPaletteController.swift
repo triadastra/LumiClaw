@@ -2,8 +2,8 @@
 //  CommandPaletteController.swift
 //  LumiAgent
 //
-//  A global Spotlight-style command palette triggered by ⌘L.
-//  Appears at the bottom-center of the screen, above all windows,
+//  A global Spotlight-style command palette triggered by ⌘L or ^L.
+//  Appears at the center of the screen, above all windows,
 //  with Agent Mode active by default.
 //
 
@@ -30,7 +30,7 @@ final class CommandPaletteController: NSObject {
 
     // MARK: Show / Hide / Toggle
 
-    func show(agents: [Agent], onSubmit: @escaping (_ text: String, _ agentId: UUID?) -> Void) {
+    func show(agents: [Agent], appState: AppState, onSubmit: @escaping (_ text: String, _ agentId: UUID?) -> Void) {
         guard !isShowing else { return }
 
         let view = CommandPaletteView(
@@ -41,6 +41,7 @@ final class CommandPaletteController: NSObject {
             },
             onDismiss: { [weak self] in self?.hide() }
         )
+        .environmentObject(appState)
 
         // Measure the view then size the panel to fit (shadow padding included)
         let shadowPad: CGFloat = 18
@@ -61,20 +62,21 @@ final class CommandPaletteController: NSObject {
             defer: false
         )
         p.contentView = hosting
-        p.level = .floating
+        p.level = .statusBar // Very high level, above normal windows
         p.backgroundColor = .clear
         p.isOpaque = false
         p.hasShadow = false          // shadow drawn by SwiftUI
         p.isMovableByWindowBackground = true
-        p.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
+        // fullScreenAuxiliary allows it to appear over full-screen apps
+        p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
         p.isReleasedWhenClosed = false
 
-        // Position: bottom-center of main screen, above the Dock
+        // Position: center of main screen
         if let screen = NSScreen.main {
             let sf = screen.visibleFrame
             let origin = NSPoint(
                 x: sf.midX - panelSize.width / 2,
-                y: sf.minY + 72
+                y: sf.midY - panelSize.height / 2 + 100 // Slightly above true center
             )
             p.setFrameOrigin(origin)
         }
@@ -83,10 +85,16 @@ final class CommandPaletteController: NSObject {
         NSApp.activate(ignoringOtherApps: true)
         panel = p
 
-        // Local monitor: ⌥⌘L dismisses while palette is visible
+        // Local monitor: ⌘L or ^L dismisses while palette is visible
         localMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-            if flags == [.option, .command], event.keyCode == 37 {
+            // Command+L (keyCode 37)
+            if flags == .command, event.keyCode == 37 {
+                self?.hide()
+                return nil
+            }
+            // Control+L (keyCode 37)
+            if flags == .control, event.keyCode == 37 {
                 self?.hide()
                 return nil
             }
@@ -100,14 +108,15 @@ final class CommandPaletteController: NSObject {
         panel = nil
     }
 
-    func toggle(agents: [Agent], onSubmit: @escaping (_ text: String, _ agentId: UUID?) -> Void) {
-        if isShowing { hide() } else { show(agents: agents, onSubmit: onSubmit) }
+    func toggle(agents: [Agent], appState: AppState, onSubmit: @escaping (_ text: String, _ agentId: UUID?) -> Void) {
+        if isShowing { hide() } else { show(agents: agents, appState: appState, onSubmit: onSubmit) }
     }
 }
 
 // MARK: - Palette View
 
 struct CommandPaletteView: View {
+    @EnvironmentObject var appState: AppState
     let agents: [Agent]
     let onSubmit: (_ text: String, _ agentId: UUID?) -> Void
     let onDismiss: () -> Void
@@ -118,12 +127,12 @@ struct CommandPaletteView: View {
     @FocusState private var fieldFocused: Bool
 
     // The agent to receive the command.
-    // Priority: explicit @mention in text > chip selection > first agent.
+    // Priority: explicit @mention in text > chip selection > default agent > first agent.
     private var resolvedAgentId: UUID? {
         if let mentioned = agents.first(where: { text.contains("@\($0.name)") }) {
             return mentioned.id
         }
-        return selectedAgentId ?? agents.first?.id
+        return selectedAgentId ?? appState.defaultExteriorAgentId ?? agents.first?.id
     }
 
     private var canSend: Bool {

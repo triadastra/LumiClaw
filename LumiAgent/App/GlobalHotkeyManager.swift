@@ -38,28 +38,28 @@ final class GlobalHotkeyManager {
 
     private var hotKeyRef: EventHotKeyRef?
     private var hotKeyRef2: EventHotKeyRef?
+    private var hotKeyRef3: EventHotKeyRef?
     private var eventHandlerRef: EventHandlerRef?
 
     /// Called on the main thread when the primary hotkey is pressed.
     var onActivate: (() -> Void)?
     /// Called on the main thread when the secondary hotkey is pressed.
     var onActivate2: (() -> Void)?
+    /// Called on the main thread when the tertiary hotkey is pressed.
+    var onActivate3: (() -> Void)?
 
     private init() {}
 
-    // MARK: Register / Unregister
+    // MARK: - Internal Handler Setup
 
-    /// Register the primary global hotkey. Safe to call multiple times — re-registers.
-    func register(keyCode: UInt32 = KeyCode.L,
-                  modifiers: UInt32 = Modifiers.option | Modifiers.command) {
-        unregister()
+    private func ensureEventHandlerInstalled() {
+        guard eventHandlerRef == nil else { return }
 
         var spec = EventTypeSpec(
             eventClass: OSType(kEventClassKeyboard),
             eventKind: OSType(kEventHotKeyPressed)
         )
 
-        // Pass a raw pointer to self so the C callback can call back into Swift.
         let selfPtr = Unmanaged.passUnretained(self).toOpaque()
 
         InstallEventHandler(
@@ -70,7 +70,6 @@ final class GlobalHotkeyManager {
                     .fromOpaque(ptr)
                     .takeUnretainedValue()
 
-                // Determine which hotkey fired by reading the EventHotKeyID
                 var hkID = EventHotKeyID()
                 let err = GetEventParameter(
                     event,
@@ -84,12 +83,10 @@ final class GlobalHotkeyManager {
                 guard err == noErr else { return OSStatus(eventNotHandledErr) }
 
                 switch hkID.id {
-                case 1:
-                    DispatchQueue.main.async { mgr.onActivate?() }
-                case 2:
-                    DispatchQueue.main.async { mgr.onActivate2?() }
-                default:
-                    return OSStatus(eventNotHandledErr)
+                case 1:  DispatchQueue.main.async { mgr.onActivate?() }
+                case 2:  DispatchQueue.main.async { mgr.onActivate2?() }
+                case 3:  DispatchQueue.main.async { mgr.onActivate3?() }
+                default: return OSStatus(eventNotHandledErr)
                 }
                 return noErr
             },
@@ -98,73 +95,45 @@ final class GlobalHotkeyManager {
             selfPtr,
             &eventHandlerRef
         )
-
-        // 'LUMI' as FourCharCode = 0x4C554D49
-        var hkID = EventHotKeyID(signature: 0x4C554D49, id: 1)
-        RegisterEventHotKey(
-            keyCode, modifiers, hkID,
-            GetApplicationEventTarget(), 0,
-            &hotKeyRef
-        )
     }
 
-    /// Register a secondary global hotkey (e.g. Ctrl+L for quick action panel).
+    // MARK: Register / Unregister
+
+    /// Register the primary global hotkey (ID: 1).
+    func register(keyCode: UInt32 = KeyCode.L,
+                  modifiers: UInt32 = Modifiers.command) {
+        if let ref = hotKeyRef { UnregisterEventHotKey(ref); hotKeyRef = nil }
+        ensureEventHandlerInstalled()
+        var hkID = EventHotKeyID(signature: 0x4C554D49, id: 1) // 'LUMI'
+        RegisterEventHotKey(keyCode, modifiers, hkID, GetApplicationEventTarget(), 0, &hotKeyRef)
+    }
+
+    /// Register a secondary global hotkey (ID: 2).
     func registerSecondary(keyCode: UInt32 = KeyCode.L,
                            modifiers: UInt32 = Modifiers.control) {
-        unregisterSecondary()
+        if let ref = hotKeyRef2 { UnregisterEventHotKey(ref); hotKeyRef2 = nil }
+        ensureEventHandlerInstalled()
+        var hkID = EventHotKeyID(signature: 0x4C554D32, id: 2) // 'LUM2'
+        RegisterEventHotKey(keyCode, modifiers, hkID, GetApplicationEventTarget(), 0, &hotKeyRef2)
+    }
 
-        // If the event handler isn't installed yet (e.g. registerSecondary called
-        // before register), install it now.
-        if eventHandlerRef == nil {
-            var spec = EventTypeSpec(
-                eventClass: OSType(kEventClassKeyboard),
-                eventKind: OSType(kEventHotKeyPressed)
-            )
-            let selfPtr = Unmanaged.passUnretained(self).toOpaque()
-            InstallEventHandler(
-                GetApplicationEventTarget(),
-                { (_, event, userInfo) -> OSStatus in
-                    guard let ptr = userInfo, let event = event else { return OSStatus(eventNotHandledErr) }
-                    let mgr = Unmanaged<GlobalHotkeyManager>
-                        .fromOpaque(ptr)
-                        .takeUnretainedValue()
-                    var hkID = EventHotKeyID()
-                    let err = GetEventParameter(
-                        event,
-                        EventParamName(kEventParamDirectObject),
-                        EventParamType(typeEventHotKeyID),
-                        nil,
-                        MemoryLayout<EventHotKeyID>.size,
-                        nil,
-                        &hkID
-                    )
-                    guard err == noErr else { return OSStatus(eventNotHandledErr) }
-                    switch hkID.id {
-                    case 1:  DispatchQueue.main.async { mgr.onActivate?() }
-                    case 2:  DispatchQueue.main.async { mgr.onActivate2?() }
-                    default: return OSStatus(eventNotHandledErr)
-                    }
-                    return noErr
-                },
-                1,
-                &spec,
-                selfPtr,
-                &eventHandlerRef
-            )
-        }
-
-        // 'LUM2' as FourCharCode = 0x4C554D32
-        var hkID = EventHotKeyID(signature: 0x4C554D32, id: 2)
-        RegisterEventHotKey(
-            keyCode, modifiers, hkID,
-            GetApplicationEventTarget(), 0,
-            &hotKeyRef2
-        )
+    /// Register a tertiary global hotkey (ID: 3).
+    func registerTertiary(keyCode: UInt32 = KeyCode.L,
+                          modifiers: UInt32 = Modifiers.option | Modifiers.command) {
+        if let ref = hotKeyRef3 { UnregisterEventHotKey(ref); hotKeyRef3 = nil }
+        ensureEventHandlerInstalled()
+        var hkID = EventHotKeyID(signature: 0x4C554D33, id: 3) // 'LUM3'
+        RegisterEventHotKey(keyCode, modifiers, hkID, GetApplicationEventTarget(), 0, &hotKeyRef3)
     }
 
     func unregister() {
+        if let ref = hotKeyRef { UnregisterEventHotKey(ref); hotKeyRef = nil }
+    }
+
+    func unregisterAll() {
         if let ref = hotKeyRef   { UnregisterEventHotKey(ref); hotKeyRef = nil }
         if let ref = hotKeyRef2  { UnregisterEventHotKey(ref); hotKeyRef2 = nil }
+        if let ref = hotKeyRef3  { UnregisterEventHotKey(ref); hotKeyRef3 = nil }
         if let ref = eventHandlerRef { RemoveEventHandler(ref); eventHandlerRef = nil }
     }
 

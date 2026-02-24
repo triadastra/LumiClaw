@@ -231,7 +231,23 @@ class AppState: ObservableObject {
     @Published var selectedAgentId: UUID?
     @Published var agents: [Agent] = []
     @Published var showingNewAgent = false
-    @Published var showingSettings = false
+
+    // MARK: - Persistent Default Agent
+    @AppStorage("settings.defaultExteriorAgentId") private var defaultAgentIdString = ""
+    
+    var defaultExteriorAgentId: UUID? {
+        get { UUID(uuidString: defaultAgentIdString) }
+        set { defaultAgentIdString = newValue?.uuidString ?? "" }
+    }
+
+    func isDefaultAgent(_ id: UUID) -> Bool {
+        defaultExteriorAgentId == id
+    }
+
+    func setDefaultAgent(_ id: UUID?) {
+        defaultExteriorAgentId = id
+        objectWillChange.send()
+    }
 
     // MARK: - Agent Space
     @Published var conversations: [Conversation] = [] {
@@ -289,25 +305,49 @@ class AppState: ObservableObject {
     private func setupGlobalHotkey() {
         // Use Carbon RegisterEventHotKey so the shortcut is truly intercepted
         // globally — it never reaches the frontmost app.
-        // Default: ⌥⌘L (Option + Command + L). Override by calling
-        // GlobalHotkeyManager.shared.register(keyCode:modifiers:) in AppDelegate.
+        
+        // Both ⌘L and ^L (Control + L) now trigger the Command Palette.
+        // This ensures the palette is a 'top rule' in any app, overriding 
+        // default behaviors like browser address bar focus or terminal clear.
         GlobalHotkeyManager.shared.onActivate = { [weak self] in
             self?.toggleCommandPalette()
         }
-        GlobalHotkeyManager.shared.register()
+        // Slot 1: ⌘L
+        GlobalHotkeyManager.shared.register(
+            keyCode: GlobalHotkeyManager.KeyCode.L,
+            modifiers: GlobalHotkeyManager.Modifiers.command
+        )
 
-        // Secondary: Ctrl+L — Quick Action Panel
         GlobalHotkeyManager.shared.onActivate2 = { [weak self] in
-            self?.toggleQuickActionPanel()
+            self?.toggleCommandPalette()
         }
+        // Slot 2: ^L
         GlobalHotkeyManager.shared.registerSecondary(
             keyCode: GlobalHotkeyManager.KeyCode.L,
             modifiers: GlobalHotkeyManager.Modifiers.control
         )
+        
+        // Quick Action Panel moved to ⌥⌘L (Option + Command + L)
+        GlobalHotkeyManager.shared.onActivate3 = { [weak self] in
+            self?.toggleQuickActionPanel()
+        }
+        GlobalHotkeyManager.shared.registerTertiary(
+            keyCode: GlobalHotkeyManager.KeyCode.L,
+            modifiers: GlobalHotkeyManager.Modifiers.option | GlobalHotkeyManager.Modifiers.command
+        )
+
+        // Connect the floating reply bubble's send button to AppState
+        AgentReplyBubbleController.shared.onSend = { [weak self] text, convId in
+            // Clear prior content for the new stream
+            AgentReplyBubbleController.shared.prepareForNewResponse()
+            // Send as a regular message in the existing conversation
+            // Use agentMode=true because quick actions are typically autonomous
+            self?.sendMessage(text, in: convId, agentMode: true)
+        }
     }
 
     func toggleCommandPalette() {
-        CommandPaletteController.shared.toggle(agents: agents) { [weak self] text, agentId in
+        CommandPaletteController.shared.toggle(agents: agents, appState: self) { [weak self] text, agentId in
             self?.sendCommandPaletteMessage(text: text, agentId: agentId)
         }
     }
@@ -319,31 +359,15 @@ class AppState: ObservableObject {
     }
 
     func sendQuickAction(type: QuickActionType) {
-        guard let targetAgent = agents.first else {
+        let targetId = defaultExteriorAgentId ?? agents.first?.id
+        guard let targetId, let targetAgent = agents.first(where: { $0.id == targetId }) else {
             print("⚠️ No agents available for quick action")
             return
-        }
-
-        // Show the corner reply bubble immediately
-        DispatchQueue.main.async {
-            AgentReplyBubbleController.shared.show(initialText: "Processing...")
         }
 
         // Run entirely in the background — no focus steal, no screen-control overlay.
         // The agent acts directly on the current page.
         Task {
-            let jpeg: Data? = await Task.detached(priority: .userInitiated) {
-                switch type {
-                case .analyzePage:
-                    return captureWindowAsJPEG(maxWidth: 1440)
-                case .thinkAndWrite, .writeNew:
-                    return captureScreenAsJPEG(maxWidth: 1440)
-                }
-            }.value
-
-            // Detect active app and gather iWork context if applicable
-            let (prompt, _) = await buildQuickActionPrompt(type: type)
-
             // Find or create DM (updates conversation list but doesn't navigate to it)
             let convId: UUID
             if let existing = conversations.first(where: { !$0.isGroup && $0.participantIds == [targetAgent.id] }) {
@@ -353,6 +377,20 @@ class AppState: ObservableObject {
                 conversations.insert(conv, at: 0)
                 convId = conv.id
             }
+
+            // Prepare the floating reply bubble immediately
+            DispatchQueue.main.async {
+                AgentReplyBubbleController.shared.show(initialText: "Processing...")
+                AgentReplyBubbleController.shared.setConversationId(convId)
+            }
+
+            let jpeg: Data? = await Task.detached(priority: .userInitiated) {
+                // Use full-screen capture for all quick action types to ensure complete context
+                return captureScreenAsJPEG(maxWidth: 1440)
+            }.value
+
+            // Detect active app and gather iWork context if applicable
+            let (prompt, _) = await buildQuickActionPrompt(type: type)
 
             guard let convIndex = conversations.firstIndex(where: { $0.id == convId }) else { return }
 
@@ -530,18 +568,23 @@ class AppState: ObservableObject {
 
             ═══ TASK: EDIT AND IMPROVE ═══
             Review the document content and:
-            1. Identify any typos, grammar errors, or unclear passages
-            2. Fix them using the iWork tools
-            3. Suggest improvements to clarity and flow
-            4. Use iwork_replace_text, iwork_write_text, or iwork_insert_after_anchor as needed
-
+            1. Identify any typos, grammar errors, or unclear passages.
+            2. Fix them or continue the writing as appropriate.
+            3. Suggest improvements to clarity and flow.
+            
+            ═══ AUTONOMOUS WRITING ═══
+            You should be PROACTIVE. If you have a clear idea of what to write or fix:
+            - Use `run_applescript` to directly insert or replace text in the active application.
+            - For browser-based apps, use JavaScript via AppleScript to manipulate the DOM.
+            - For native apps, use System Events to type or paste content.
+            
             TOOLS AVAILABLE:
-            - iwork_replace_text: Find and fix specific text
-            - iwork_write_text: Add or rewrite content
-            - iwork_insert_after_anchor: Insert text after a specific location
+            - iwork_replace_text / iwork_write_text (if applicable)
+            - run_applescript (use for ANY app to type/insert/edit)
+            - type_text / press_key (last resort)
             \(contentSection)
 
-            Be proactive and fix issues directly without asking for permission.
+            Be proactive and fix issues directly without asking for permission. Perform the writing action immediately if you can determine the correct context.
             """
 
         case .writeNew:
@@ -568,7 +611,7 @@ class AppState: ObservableObject {
 
     /// Routes a command-palette submission into the normal agent-mode send path.
     func sendCommandPaletteMessage(text: String, agentId: UUID?) {
-        let targetId = agentId ?? agents.first?.id
+        let targetId = agentId ?? defaultExteriorAgentId ?? agents.first?.id
         guard let targetId, agents.contains(where: { $0.id == targetId }) else { return }
 
         // Find or create a DM with the target agent, then send in agent mode

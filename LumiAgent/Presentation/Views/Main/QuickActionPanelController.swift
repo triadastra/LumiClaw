@@ -2,13 +2,21 @@
 //  QuickActionPanelController.swift
 //  LumiAgent
 //
-//  A glass morphism Quick Actions panel (Ctrl+L) centered on screen.
+//  A glass morphism Quick Actions panel (⌥⌘L) centered on screen.
 //  On action click, displays agent reply in a glass bubble at upper right corner.
 //
 
 #if os(macOS)
 import AppKit
 import SwiftUI
+
+// MARK: - Panel subclass
+
+/// Borderless panel that can become key so UI elements receive keyboard input.
+private final class KeyablePanel: NSPanel {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
+}
 
 // MARK: - Quick Action Types
 
@@ -64,7 +72,7 @@ enum QuickActionType: String, CaseIterable {
         case .analyzePage:
             return "Analyze the content and structure of what's currently displayed on the screen."
         case .thinkAndWrite:
-            return "Review the current content and write an appropriate response or continuation."
+            return "Review the content and proactively use tools (like AppleScript) to write or improve it."
         case .writeNew:
             return "Create and add new content that would be appropriate for this document."
         }
@@ -81,7 +89,7 @@ enum QuickActionType: String, CaseIterable {
 final class QuickActionPanelController: NSObject {
     static let shared = QuickActionPanelController()
 
-    private var panel: NSPanel?
+    private var panel: KeyablePanel?
     private var onAction: ((QuickActionType) -> Void)?
 
     var isVisible: Bool { panel?.isVisible ?? false }
@@ -125,19 +133,22 @@ final class QuickActionPanelController: NSObject {
         let hosting = NSHostingView(rootView: view)
         hosting.setFrameSize(NSSize(width: panelWidth, height: panelHeight))
 
-        let p = NSPanel(
+        let p = KeyablePanel(
             contentRect: NSRect(origin: .zero, size: NSSize(width: panelWidth, height: panelHeight)),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
         )
         p.contentView = hosting
-        p.level = .floating
+        p.level = .statusBar // High level
+        p.isFloatingPanel = true
+        p.hidesOnDeactivate = false
+        p.becomesKeyOnlyIfNeeded = true
         p.backgroundColor = .clear
         p.isOpaque = false
         p.hasShadow = false
         p.isMovableByWindowBackground = false
-        p.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
+        p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
         p.isReleasedWhenClosed = false
 
         guard let screen = NSScreen.main else { return }
@@ -167,6 +178,7 @@ class AgentReplyBubbleModel: NSObject, ObservableObject {
     @Published var userInput: String = ""
     @Published var toolCalls: [String] = []
     @Published var isStreaming = false
+    @Published var conversationId: UUID?
 
     func addToolCall(_ toolName: String, args: [String: String]) {
         let argStr = args.map { "\($0.key): \($0.value)" }.joined(separator: ", ")
@@ -181,9 +193,11 @@ class AgentReplyBubbleModel: NSObject, ObservableObject {
 final class AgentReplyBubbleController: NSObject {
     static let shared = AgentReplyBubbleController()
 
-    private var panel: NSPanel?
+    private var panel: KeyablePanel?
     private var bubbleModel: AgentReplyBubbleModel?
     private var hosting: NSHostingView<AgentReplyBubbleView>?
+
+    var onSend: ((String, UUID) -> Void)?
 
     func show(initialText: String = "") {
         guard panel == nil else { return }
@@ -213,6 +227,20 @@ final class AgentReplyBubbleController: NSObject {
     func addToolCall(_ toolName: String, args: [String: String]) {
         bubbleModel?.addToolCall(toolName, args: args)
         resizePanel()
+    }
+
+    func setConversationId(_ id: UUID) {
+        DispatchQueue.main.async {
+            self.bubbleModel?.conversationId = id
+        }
+    }
+
+    func prepareForNewResponse() {
+        DispatchQueue.main.async {
+            self.bubbleModel?.text = ""
+            self.bubbleModel?.toolCalls.removeAll()
+            self.resizePanel()
+        }
     }
 
     private func resizePanel() {
@@ -254,18 +282,21 @@ final class AgentReplyBubbleController: NSObject {
         hosting.setFrameSize(NSSize(width: 360, height: 250))
         self.hosting = hosting
 
-        let p = NSPanel(
+        let p = KeyablePanel(
             contentRect: NSRect(origin: .zero, size: NSSize(width: 360, height: 250)),
-            styleMask: [.borderless],
+            styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
         )
         p.contentView = hosting
-        p.level = .floating
+        p.level = .statusBar
+        p.isFloatingPanel = true
+        p.hidesOnDeactivate = false
+        p.becomesKeyOnlyIfNeeded = true
         p.backgroundColor = .clear
         p.isOpaque = false
         p.hasShadow = false
-        p.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .transient]
+        p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
         p.isReleasedWhenClosed = false
         p.acceptsMouseMovedEvents = true
 
@@ -432,6 +463,7 @@ struct AgentReplyBubbleView: View {
                 TextField("Type response...", text: $model.userInput)
                     .font(.system(size: 11))
                     .textFieldStyle(.roundedBorder)
+                    .onSubmit { sendUserInput() }
 
                 Button(action: { sendUserInput() }) {
                     Image(systemName: "arrow.up.circle.fill")
@@ -455,9 +487,9 @@ struct AgentReplyBubbleView: View {
     }
 
     private func sendUserInput() {
+        guard let convId = model.conversationId, !model.userInput.isEmpty else { return }
+        controller?.onSend?(model.userInput, convId)
         model.userInput = ""
-        // TODO: Send user input to agent
-        // This will be connected to the agent response handler
     }
 }
 #endif

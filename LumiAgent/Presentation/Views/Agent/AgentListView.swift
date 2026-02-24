@@ -45,6 +45,7 @@ struct AgentListView: View {
 }
 
 struct AgentRowView: View {
+    @EnvironmentObject var appState: AppState
     let agent: Agent
 
     var body: some View {
@@ -52,6 +53,11 @@ struct AgentRowView: View {
             HStack {
                 Text(agent.name)
                     .font(.headline)
+                if appState.isDefaultAgent(agent.id) {
+                    Image(systemName: "star.fill")
+                        .font(.caption2)
+                        .foregroundStyle(.yellow)
+                }
                 Spacer()
                 StatusBadge(status: agent.status)
             }
