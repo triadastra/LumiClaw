@@ -24,6 +24,76 @@
     
     <key>CFBundleExecutable</key>
     <string>$(EXECUTABLE_NAME)</string>
+
+    <key>NSServices</key>
+    <array>
+        <dict>
+            <key>NSMenuItem</key>
+            <dict>
+                <key>default</key>
+                <string>Lumi: Extend</string>
+            </dict>
+            <key>NSMessage</key>
+            <string>extendSelectedText</string>
+            <key>NSSendTypes</key>
+            <array>
+                <string>public.utf8-plain-text</string>
+                <string>NSStringPboardType</string>
+            </array>
+            <key>NSReturnTypes</key>
+            <array>
+                <string>public.utf8-plain-text</string>
+                <string>NSStringPboardType</string>
+            </array>
+        </dict>
+        <dict>
+            <key>NSMenuItem</key>
+            <dict>
+                <key>default</key>
+                <string>Lumi: Correct Grammar</string>
+            </dict>
+            <key>NSMessage</key>
+            <string>correctGrammar</string>
+            <key>NSSendTypes</key>
+            <array>
+                <string>public.utf8-plain-text</string>
+                <string>NSStringPboardType</string>
+            </array>
+            <key>NSReturnTypes</key>
+            <array>
+                <string>public.utf8-plain-text</string>
+                <string>NSStringPboardType</string>
+            </array>
+        </dict>
+        <dict>
+            <key>NSMenuItem</key>
+            <dict>
+                <key>default</key>
+                <string>Lumi: Auto Resolve Text</string>
+            </dict>
+            <key>NSMessage</key>
+            <string>autoResolveText</string>
+            <key>NSSendTypes</key>
+            <array>
+                <string>public.utf8-plain-text</string>
+                <string>NSStringPboardType</string>
+            </array>
+            <key>NSReturnTypes</key>
+            <array>
+                <string>public.utf8-plain-text</string>
+                <string>NSStringPboardType</string>
+            </array>
+        </dict>
+        <dict>
+            <key>NSMenuItem</key>
+            <dict>
+                <key>default</key>
+                <string>Lumi: Clean Desktop (Safe)</string>
+            </dict>
+            <key>NSMessage</key>
+            <string>cleanDesktopService</string>
+        </dict>
+    </array>
     
     <!-- Permissions for macOS features -->
     <key>NSAppleEventsUsageDescription</key>

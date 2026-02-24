@@ -32,22 +32,20 @@ struct MainWindow: View {
         }
         .navigationTitle("Lumi Agent")
         .toolbar {
-            ToolbarItemGroup {
-                Button {
-                    Task { await executeCurrentAgent() }
-                } label: {
-                    Label("Execute", systemImage: "play.fill")
+            if appState.selectedSidebarItem == .agentSpace {
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        Task { await executionEngine.stop() }
+                    } label: {
+                        Label("Stop", systemImage: "stop.fill")
+                            .labelStyle(.titleAndIcon)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.large)
+                    .disabled(!executionEngine.isExecuting)
+                    .help("Stop the running agent process")
+                    .keyboardShortcut(".", modifiers: .command)
                 }
-                .disabled(appState.selectedAgentId == nil || executionEngine.isExecuting)
-                .help("Execute selected agent")
-
-                Button {
-                    Task { await executionEngine.stop() }
-                } label: {
-                    Label("Stop", systemImage: "stop.fill")
-                }
-                .disabled(!executionEngine.isExecuting)
-                .help("Stop execution")
             }
         }
         .sheet(isPresented: $appState.showingNewAgent) {
@@ -92,14 +90,12 @@ struct SidebarView: View {
     @EnvironmentObject var appState: AppState
 
     var body: some View {
-        List {
+        List(selection: $appState.selectedSidebarItem) {
             ForEach(SidebarItem.allCases) { item in
-                Button {
-                    appState.selectedSidebarItem = item
-                } label: {
-                    Label(item.rawValue, systemImage: item.icon)
-                }
-                .listItemTint(appState.selectedSidebarItem == item ? .accentColor : nil)
+                Label(item.rawValue, systemImage: item.icon)
+                    .font(.system(size: 14, weight: .medium))
+                    .padding(.vertical, 6)
+                    .tag(item)
             }
         }
         .listStyle(.sidebar)
@@ -118,6 +114,8 @@ struct ContentListView: View {
                 AgentListView()
             case .agentSpace:
                 AgentSpaceView()
+            case .hotkeySpace:
+                HotkeySpaceListView()
             case .health:
                 HealthListView()
             case .history:
@@ -153,6 +151,8 @@ struct DetailView: View {
                 } else {
                     EmptyDetailView(message: "Select or start a conversation")
                 }
+            case .hotkeySpace:
+                HotkeySpaceDetailView()
             case .health:
                 HealthDetailView()
             case .history:
@@ -185,6 +185,58 @@ struct EmptyDetailView: View {
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+// MARK: - Hotkey Space
+
+struct HotkeySpaceListView: View {
+    @EnvironmentObject var appState: AppState
+
+    private var hotkeyConversation: Conversation? {
+        appState.conversations.first { ($0.title ?? "") == "Hotkey Space" }
+    }
+
+    var body: some View {
+        Group {
+            if let conv = hotkeyConversation {
+                List(selection: $appState.selectedConversationId) {
+                    Label(conv.title ?? "Hotkey Space", systemImage: "keyboard")
+                        .tag(conv.id)
+                }
+                .navigationTitle("Hotkey Space")
+            } else {
+                VStack(spacing: 10) {
+                    Image(systemName: "keyboard")
+                        .font(.system(size: 34))
+                        .foregroundStyle(.secondary)
+                    Text("No hotkey conversation yet")
+                        .font(.headline)
+                        .foregroundStyle(.secondary)
+                    Text("Use ⌥⌘E / ⌥⌘G / ⌥⌘R to create streamed hotkey actions.")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                        .multilineTextAlignment(.center)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+    }
+}
+
+struct HotkeySpaceDetailView: View {
+    @EnvironmentObject var appState: AppState
+
+    private var hotkeyConversationId: UUID? {
+        appState.conversations.first { ($0.title ?? "") == "Hotkey Space" }?.id
+    }
+
+    var body: some View {
+        if let convId = hotkeyConversationId {
+            ChatView(conversationId: convId)
+        } else {
+            EmptyDetailView(message: "Use a global hotkey to start Hotkey Space.")
+        }
     }
 }
 
@@ -774,6 +826,9 @@ struct SettingsListView: View {
     private let sections: [(title: String, icon: String, id: String)] = [
         ("Account", "person.crop.circle", "account"),
         ("API Keys", "key.fill", "apiKeys"),
+        ("Permissions", "lock.shield.fill", "permissions"),
+        ("Integrations", "slider.horizontal.3", "integrations"),
+        ("Hotkeys", "keyboard", "hotkeys"),
         ("Security", "shield.fill", "security"),
         ("About", "info.circle.fill", "about"),
     ]
@@ -796,6 +851,12 @@ struct SettingsDetailView: View {
             AccountTab()
         case "apiKeys":
             APIKeysTab()
+        case "permissions":
+            PermissionsTab()
+        case "integrations":
+            IntegrationsTab()
+        case "hotkeys":
+            HotkeysTab()
         case "security":
             SecurityTab()
         case "about":

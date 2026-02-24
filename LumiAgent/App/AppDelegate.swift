@@ -18,6 +18,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Configure app
         NSApp.setActivationPolicy(.regular)
+        NSApp.servicesProvider = LumiServicesProvider.shared
+        NSUpdateDynamicServices()
         NSApp.activate(ignoringOtherApps: true)
 
         // Set up menu bar icon

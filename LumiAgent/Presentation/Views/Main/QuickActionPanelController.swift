@@ -50,12 +50,14 @@ enum QuickActionType: String, CaseIterable {
     case analyzePage
     case thinkAndWrite
     case writeNew
+    case cleanDesktop
 
     var icon: String {
         switch self {
         case .analyzePage:   return "eye.fill"
         case .thinkAndWrite: return "pencil.line"
         case .writeNew:      return "doc.badge.plus"
+        case .cleanDesktop:  return "sparkles.rectangle.stack.fill"
         }
     }
 
@@ -64,6 +66,7 @@ enum QuickActionType: String, CaseIterable {
         case .analyzePage:   return "Analyze"
         case .thinkAndWrite: return "Write"
         case .writeNew:      return "New"
+        case .cleanDesktop:  return "Clean Desktop"
         }
     }
 
@@ -75,12 +78,14 @@ enum QuickActionType: String, CaseIterable {
             return "Review the content and proactively use tools (like AppleScript) to write or improve it."
         case .writeNew:
             return "Create and add new content that would be appropriate for this document."
+        case .cleanDesktop:
+            return "Safely organize loose files on the Desktop without deleting or moving important project folders."
         }
     }
 
     static var visibleCases: [QuickActionType] {
         // Only show "Write New" for iWork apps
-        isIWorkApp() ? [.analyzePage, .thinkAndWrite, .writeNew] : [.analyzePage, .thinkAndWrite]
+        isIWorkApp() ? [.analyzePage, .thinkAndWrite, .writeNew, .cleanDesktop] : [.analyzePage, .thinkAndWrite, .cleanDesktop]
     }
 }
 

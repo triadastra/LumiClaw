@@ -20,6 +20,9 @@ extension GlobalHotkeyManager {
     /// Carbon virtual key codes for common keys.
     enum KeyCode {
         static let L: UInt32     = UInt32(kVK_ANSI_L)
+        static let E: UInt32     = UInt32(kVK_ANSI_E)
+        static let G: UInt32     = UInt32(kVK_ANSI_G)
+        static let R: UInt32     = UInt32(kVK_ANSI_R)
         static let Space: UInt32 = UInt32(kVK_Space)
     }
     /// Carbon modifier flags.
@@ -39,6 +42,9 @@ final class GlobalHotkeyManager {
     private var hotKeyRef: EventHotKeyRef?
     private var hotKeyRef2: EventHotKeyRef?
     private var hotKeyRef3: EventHotKeyRef?
+    private var hotKeyRef4: EventHotKeyRef?
+    private var hotKeyRef5: EventHotKeyRef?
+    private var hotKeyRef6: EventHotKeyRef?
     private var eventHandlerRef: EventHandlerRef?
 
     /// Called on the main thread when the primary hotkey is pressed.
@@ -47,6 +53,12 @@ final class GlobalHotkeyManager {
     var onActivate2: (() -> Void)?
     /// Called on the main thread when the tertiary hotkey is pressed.
     var onActivate3: (() -> Void)?
+    /// Called on the main thread when the quaternary hotkey is pressed.
+    var onActivate4: (() -> Void)?
+    /// Called on the main thread when the 5th hotkey is pressed.
+    var onActivate5: (() -> Void)?
+    /// Called on the main thread when the 6th hotkey is pressed.
+    var onActivate6: (() -> Void)?
 
     private init() {}
 
@@ -86,6 +98,9 @@ final class GlobalHotkeyManager {
                 case 1:  DispatchQueue.main.async { mgr.onActivate?() }
                 case 2:  DispatchQueue.main.async { mgr.onActivate2?() }
                 case 3:  DispatchQueue.main.async { mgr.onActivate3?() }
+                case 4:  DispatchQueue.main.async { mgr.onActivate4?() }
+                case 5:  DispatchQueue.main.async { mgr.onActivate5?() }
+                case 6:  DispatchQueue.main.async { mgr.onActivate6?() }
                 default: return OSStatus(eventNotHandledErr)
                 }
                 return noErr
@@ -126,6 +141,30 @@ final class GlobalHotkeyManager {
         RegisterEventHotKey(keyCode, modifiers, hkID, GetApplicationEventTarget(), 0, &hotKeyRef3)
     }
 
+    /// Register a quaternary global hotkey (ID: 4).
+    func registerQuaternary(keyCode: UInt32, modifiers: UInt32) {
+        if let ref = hotKeyRef4 { UnregisterEventHotKey(ref); hotKeyRef4 = nil }
+        ensureEventHandlerInstalled()
+        var hkID = EventHotKeyID(signature: 0x4C554D34, id: 4) // 'LUM4'
+        RegisterEventHotKey(keyCode, modifiers, hkID, GetApplicationEventTarget(), 0, &hotKeyRef4)
+    }
+
+    /// Register a 5th global hotkey (ID: 5).
+    func registerFifth(keyCode: UInt32, modifiers: UInt32) {
+        if let ref = hotKeyRef5 { UnregisterEventHotKey(ref); hotKeyRef5 = nil }
+        ensureEventHandlerInstalled()
+        var hkID = EventHotKeyID(signature: 0x4C554D35, id: 5) // 'LUM5'
+        RegisterEventHotKey(keyCode, modifiers, hkID, GetApplicationEventTarget(), 0, &hotKeyRef5)
+    }
+
+    /// Register a 6th global hotkey (ID: 6).
+    func registerSixth(keyCode: UInt32, modifiers: UInt32) {
+        if let ref = hotKeyRef6 { UnregisterEventHotKey(ref); hotKeyRef6 = nil }
+        ensureEventHandlerInstalled()
+        var hkID = EventHotKeyID(signature: 0x4C554D36, id: 6) // 'LUM6'
+        RegisterEventHotKey(keyCode, modifiers, hkID, GetApplicationEventTarget(), 0, &hotKeyRef6)
+    }
+
     func unregister() {
         if let ref = hotKeyRef { UnregisterEventHotKey(ref); hotKeyRef = nil }
     }
@@ -134,6 +173,9 @@ final class GlobalHotkeyManager {
         if let ref = hotKeyRef   { UnregisterEventHotKey(ref); hotKeyRef = nil }
         if let ref = hotKeyRef2  { UnregisterEventHotKey(ref); hotKeyRef2 = nil }
         if let ref = hotKeyRef3  { UnregisterEventHotKey(ref); hotKeyRef3 = nil }
+        if let ref = hotKeyRef4  { UnregisterEventHotKey(ref); hotKeyRef4 = nil }
+        if let ref = hotKeyRef5  { UnregisterEventHotKey(ref); hotKeyRef5 = nil }
+        if let ref = hotKeyRef6  { UnregisterEventHotKey(ref); hotKeyRef6 = nil }
         if let ref = eventHandlerRef { RemoveEventHandler(ref); eventHandlerRef = nil }
     }
 

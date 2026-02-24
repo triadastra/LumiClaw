@@ -1,3 +1,4 @@
+#if os(macOS)
 import Foundation
 import AppKit
 import ApplicationServices
@@ -178,3 +179,4 @@ final class SystemPermissionManager: ObservableObject {
         return !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 }
+#endif

@@ -13,15 +13,23 @@ import SwiftUI
 struct AgentSpaceView: View {
     @EnvironmentObject var appState: AppState
     @State private var showingNewConversation = false
+    
+    private func isRegularConversation(_ conv: Conversation) -> Bool {
+        (conv.title ?? "") != "Hotkey Space"
+    }
 
     var dms: [Conversation] {
-        appState.conversations.filter { !$0.isGroup }
+        appState.conversations.filter { !$0.isGroup && isRegularConversation($0) }
             .sorted { $0.updatedAt > $1.updatedAt }
     }
 
     var groups: [Conversation] {
-        appState.conversations.filter { $0.isGroup }
+        appState.conversations.filter { $0.isGroup && isRegularConversation($0) }
             .sorted { $0.updatedAt > $1.updatedAt }
+    }
+
+    private var visibleConversationCount: Int {
+        appState.conversations.filter(isRegularConversation).count
     }
 
     var body: some View {
@@ -64,7 +72,7 @@ struct AgentSpaceView: View {
             .help("New conversation")
         }
         .overlay {
-            if appState.conversations.isEmpty {
+            if visibleConversationCount == 0 {
                 VStack(spacing: 16) {
                     Image(systemName: "bubble.left.and.bubble.right")
                         .font(.system(size: 48))

@@ -6,6 +6,11 @@
 //
 
 import SwiftUI
+#if os(macOS)
+import AppKit
+import Carbon.HIToolbox
+import ApplicationServices
+#endif
 
 @main
 struct LumiAgentApp: App {
@@ -227,6 +232,7 @@ struct ToolCallRecord: Identifiable {
 
 @MainActor
 class AppState: ObservableObject {
+    static weak var shared: AppState?
     @Published var selectedSidebarItem: SidebarItem = .agents
     @Published var selectedAgentId: UUID?
     @Published var agents: [Agent] = []
@@ -254,6 +260,7 @@ class AppState: ObservableObject {
         didSet { saveConversations() }
     }
     @Published var selectedConversationId: UUID?
+    @AppStorage("settings.hotkeyConversationId") private var hotkeyConversationIdString = ""
 
     // MARK: - Tool Call History
     @Published var toolCallHistory: [ToolCallRecord] = []
@@ -278,6 +285,35 @@ class AppState: ObservableObject {
     private var screenControlCount = 0
     /// Stored Task handles so we can cancel them from the Stop button.
     private var screenControlTasks: [Task<Void, Never>] = []
+    private var hotkeyRefreshObserver: NSObjectProtocol?
+    @AppStorage("settings.enableGlobalHotkeys") private var enableGlobalHotkeys = true
+
+    #if os(macOS)
+    enum TextAssistAction {
+        case extend
+        case grammar
+        case autoResolve
+
+        var title: String {
+            switch self {
+            case .extend: return "Extend"
+            case .grammar: return "Grammar Fix"
+            case .autoResolve: return "Auto Resolve"
+            }
+        }
+
+        var instruction: String {
+            switch self {
+            case .extend:
+                return "Extend and improve this text while preserving tone. Return only the final revised text."
+            case .grammar:
+                return "Correct grammar, spelling, punctuation, and clarity. Return only the corrected text."
+            case .autoResolve:
+                return "Resolve obvious wording issues, remove awkward phrasing, and improve readability. Return only the final text."
+            }
+        }
+    }
+    #endif
 
     private let conversationsKey  = "lumiagent.conversations"
     private let automationsKey    = "lumiagent.automations"
@@ -286,10 +322,20 @@ class AppState: ObservableObject {
     #endif
 
     init() {
+        Self.shared = self
         _ = DatabaseManager.shared
         loadAgents()
         loadConversations()
         loadAutomations()
+        hotkeyRefreshObserver = NotificationCenter.default.addObserver(
+            forName: .lumiGlobalHotkeysPreferenceChanged,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.refreshGlobalHotkeys()
+            }
+        }
         #if os(macOS)
         // Register ⌘L global hotkey after init completes
         DispatchQueue.main.async { [weak self] in
@@ -303,6 +349,10 @@ class AppState: ObservableObject {
     // MARK: - Global Hotkey
 
     private func setupGlobalHotkey() {
+        guard enableGlobalHotkeys else {
+            GlobalHotkeyManager.shared.unregisterAll()
+            return
+        }
         // Use Carbon RegisterEventHotKey so the shortcut is truly intercepted
         // globally — it never reaches the frontmost app.
         
@@ -310,6 +360,7 @@ class AppState: ObservableObject {
         // This ensures the palette is a 'top rule' in any app, overriding 
         // default behaviors like browser address bar focus or terminal clear.
         GlobalHotkeyManager.shared.onActivate = { [weak self] in
+            HotkeyToastOverlayController.shared.show(message: "⌘L hotkey ran")
             self?.toggleCommandPalette()
         }
         // Slot 1: ⌘L
@@ -319,6 +370,7 @@ class AppState: ObservableObject {
         )
 
         GlobalHotkeyManager.shared.onActivate2 = { [weak self] in
+            HotkeyToastOverlayController.shared.show(message: "⌃L hotkey ran")
             self?.toggleCommandPalette()
         }
         // Slot 2: ^L
@@ -329,10 +381,40 @@ class AppState: ObservableObject {
         
         // Quick Action Panel moved to ⌥⌘L (Option + Command + L)
         GlobalHotkeyManager.shared.onActivate3 = { [weak self] in
+            HotkeyToastOverlayController.shared.show(message: "⌥⌘L hotkey ran")
             self?.toggleQuickActionPanel()
         }
         GlobalHotkeyManager.shared.registerTertiary(
             keyCode: GlobalHotkeyManager.KeyCode.L,
+            modifiers: GlobalHotkeyManager.Modifiers.option | GlobalHotkeyManager.Modifiers.command
+        )
+
+        // Global selected-text actions:
+        // ⌥⌘E = Extend, ⌥⌘G = Grammar, ⌥⌘R = Auto-resolve
+        GlobalHotkeyManager.shared.onActivate4 = { [weak self] in
+            HotkeyToastOverlayController.shared.show(message: "⌥⌘E hotkey ran")
+            self?.runGlobalTextAssist(.extend)
+        }
+        GlobalHotkeyManager.shared.registerQuaternary(
+            keyCode: GlobalHotkeyManager.KeyCode.E,
+            modifiers: GlobalHotkeyManager.Modifiers.option | GlobalHotkeyManager.Modifiers.command
+        )
+
+        GlobalHotkeyManager.shared.onActivate5 = { [weak self] in
+            HotkeyToastOverlayController.shared.show(message: "⌥⌘G hotkey ran")
+            self?.runGlobalTextAssist(.grammar)
+        }
+        GlobalHotkeyManager.shared.registerFifth(
+            keyCode: GlobalHotkeyManager.KeyCode.G,
+            modifiers: GlobalHotkeyManager.Modifiers.option | GlobalHotkeyManager.Modifiers.command
+        )
+
+        GlobalHotkeyManager.shared.onActivate6 = { [weak self] in
+            HotkeyToastOverlayController.shared.show(message: "⌥⌘R hotkey ran")
+            self?.runGlobalTextAssist(.autoResolve)
+        }
+        GlobalHotkeyManager.shared.registerSixth(
+            keyCode: GlobalHotkeyManager.KeyCode.R,
             modifiers: GlobalHotkeyManager.Modifiers.option | GlobalHotkeyManager.Modifiers.command
         )
 
@@ -344,6 +426,397 @@ class AppState: ObservableObject {
             // Use agentMode=true because quick actions are typically autonomous
             self?.sendMessage(text, in: convId, agentMode: true)
         }
+    }
+
+    func refreshGlobalHotkeys() {
+        setupGlobalHotkey()
+    }
+
+    private func runGlobalTextAssist(_ action: TextAssistAction) {
+        Task {
+            // Early check: if we don't have accessibility trust, events and AX will fail.
+            if !AXIsProcessTrusted() {
+                HotkeyToastOverlayController.shared.show(message: "Trust Lumi in Settings -> Accessibility")
+                print("⚠️ Accessibility access not granted. Global text assist will fail.")
+                return
+            }
+
+            guard let selectedText = await captureSelectedText(), !selectedText.isEmpty else {
+                HotkeyToastOverlayController.shared.show(message: "\(action.title): no selected text")
+                print("⚠️ No selected text captured for global text assist.")
+                return
+            }
+            guard let targetAgent = resolvedHotkeyTargetAgent() else {
+                HotkeyToastOverlayController.shared.show(message: "\(action.title): no agent")
+                return
+            }
+
+            let convId = ensureHotkeyConversation(agentId: targetAgent.id)
+            do {
+                let rewritten = try await rewriteTextStreaming(
+                    selectedText,
+                    action: action,
+                    agent: targetAgent,
+                    conversationId: convId
+                )
+                guard !rewritten.isEmpty else {
+                    HotkeyToastOverlayController.shared.show(message: "\(action.title): empty result")
+                    return
+                }
+                await replaceSelectedText(with: rewritten)
+                HotkeyToastOverlayController.shared.show(message: "\(action.title): applied")
+            } catch {
+                HotkeyToastOverlayController.shared.show(message: "\(action.title): failed")
+                print("⚠️ Text assist failed: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    func rewriteText(_ text: String, action: TextAssistAction) async throws -> String {
+        guard let targetId = defaultExteriorAgentId ?? agents.first?.id,
+              let agent = agents.first(where: { $0.id == targetId }) else {
+            throw NSError(domain: "LumiAgent", code: 1, userInfo: [NSLocalizedDescriptionKey: "No target agent found."])
+        }
+
+        let docContext = await buildFrontmostDocumentContext()
+        let prompt = """
+        \(action.instruction)
+
+        \(docContext)
+
+        Text:
+        \"\"\"
+        \(text)
+        \"\"\"
+        """
+
+        let repo = AIProviderRepository()
+        let response = try await repo.sendMessage(
+            provider: agent.configuration.provider,
+            model: agent.configuration.model,
+            messages: [AIMessage(role: .user, content: prompt)],
+            systemPrompt: "You are a precise writing assistant. Output plain text only.",
+            tools: [],
+            temperature: 0.2,
+            maxTokens: 1200
+        )
+        return (response.content ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func buildFrontmostDocumentContext() async -> String {
+        let bundleId = getActiveApplication()
+        let appName = NSWorkspace.shared.frontmostApplication?.localizedName ?? "Unknown App"
+
+        // iWork-specific context (already implemented and higher quality than path-only context)
+        if isIWorkApp(bundleId: bundleId) {
+            let (docInfo, content) = await getIWorkDocumentInfo()
+            let snippet = String(content.prefix(5000))
+            return """
+            Active app: \(appName) (\(bundleId))
+            Active document info: \(docInfo)
+            If relevant, align your rewrite style with this document context:
+            \(snippet.isEmpty ? "(No readable iWork content found)" : snippet)
+            """
+        }
+
+        if let localPath = await detectFrontmostDocumentPath(),
+           FileManager.default.fileExists(atPath: localPath),
+           FileManager.default.isReadableFile(atPath: localPath),
+           let content = try? String(contentsOfFile: localPath, encoding: .utf8) {
+            let snippet = String(content.prefix(5000))
+            return """
+            Active app: \(appName) (\(bundleId))
+            Active local document: \(localPath)
+            Use this context to keep the selected rewrite consistent with the current file:
+            \(snippet.isEmpty ? "(File is empty)" : snippet)
+            """
+        }
+
+        return "Active app: \(appName) (\(bundleId)). No readable local document context was detected."
+    }
+
+    private func detectFrontmostDocumentPath() async -> String? {
+        // Best-effort AppleScript without hard references to optional apps.
+        // Hard-coded app references (e.g. BBEdit) can trigger "Where is <App>?" dialogs
+        // on machines where those apps are not installed.
+        let script = """
+        tell application "System Events"
+            set frontApp to name of first application process whose frontmost is true
+        end tell
+
+        if frontApp is "TextEdit" then
+            tell application "TextEdit"
+                if (count of documents) > 0 then
+                    try
+                        return POSIX path of (path of document 1)
+                    on error
+                        return ""
+                    end try
+                end if
+            end tell
+        end if
+
+        return ""
+        """
+
+        if let out = try? await ScreenControlTools.runAppleScript(script: script) {
+            let path = out.trimmingCharacters(in: .whitespacesAndNewlines)
+            if path.hasPrefix("/") { return path }
+        }
+        return nil
+    }
+
+    private func waitForModifiersRelease(timeout: TimeInterval = 0.8) async {
+        let start = Date()
+        while Date().timeIntervalSince(start) < timeout {
+            // Check the current physical modifier state using .combinedSessionState
+            let modifiers = CGEventSource.flagsState(.combinedSessionState)
+            let isAnyDown = modifiers.contains(.maskCommand) || 
+                            modifiers.contains(.maskAlternate) || 
+                            modifiers.contains(.maskControl) || 
+                            modifiers.contains(.maskShift)
+            
+            if !isAnyDown { return }
+            try? await Task.sleep(nanoseconds: 40_000_000) // 40ms
+        }
+    }
+
+    private func captureSelectedText() async -> String? {
+        // Try accessibility first as it's non-destructive and doesn't depend on keys release.
+        if let selectedAX = captureSelectedTextViaAccessibility(),
+           !selectedAX.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return selectedAX.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        // Wait for user to release hotkey modifiers so they don't interfere with the ⌘C simulation.
+        // If ⌥ or ⌘ are still held, the system might see ⌥⌘C instead of ⌘C.
+        await waitForModifiersRelease()
+
+        let pasteboard = NSPasteboard.general
+        let previous = pasteboard.string(forType: .string)
+        var selected: String?
+
+        // Retry with slightly different timings.
+        for attempt in 0..<3 {
+            let sentinel = "__LUMI_SELECTION_SENTINEL__\(UUID().uuidString)"
+            pasteboard.clearContents()
+            pasteboard.setString(sentinel, forType: .string)
+
+            await triggerCopyFromFrontmostApp()
+            try? await Task.sleep(nanoseconds: UInt64(300_000_000 + (attempt * 150_000_000)))
+
+            let copied = readStringFromPasteboard(pasteboard)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+
+            if let copied, !copied.isEmpty, copied != sentinel {
+                selected = copied
+                break
+            }
+        }
+
+        // Restore clipboard text content
+        pasteboard.clearContents()
+        if let previous {
+            pasteboard.setString(previous, forType: .string)
+        }
+
+        return selected
+    }
+
+    private func triggerCopyFromFrontmostApp() async {
+        // Strategy 1: CGEvent Command+C
+        sendCommandShortcut(CGKeyCode(kVK_ANSI_C))
+        try? await Task.sleep(nanoseconds: 120_000_000)
+
+        // Strategy 2: System Events keystroke Command+C
+        _ = try? await ScreenControlTools.runAppleScript(script: """
+        tell application "System Events" to keystroke "c" using command down
+        """)
+        try? await Task.sleep(nanoseconds: 120_000_000)
+
+        // Strategy 3: Use front app Edit -> Copy menu item if available
+        _ = try? await ScreenControlTools.runAppleScript(script: """
+        tell application "System Events"
+            tell first application process whose frontmost is true
+                if exists menu bar 1 then
+                    try
+                        click menu item "Copy" of menu 1 of menu bar item "Edit" of menu bar 1
+                    end try
+                end if
+            end tell
+        end tell
+        """)
+    }
+
+    private func readStringFromPasteboard(_ pboard: NSPasteboard) -> String? {
+        if let s = pboard.string(forType: .string), !s.isEmpty { return s }
+        if let s = pboard.string(forType: NSPasteboard.PasteboardType("public.utf8-plain-text")), !s.isEmpty { return s }
+        if let s = pboard.string(forType: NSPasteboard.PasteboardType("public.utf16-external-plain-text")), !s.isEmpty { return s }
+
+        if let rtfData = pboard.data(forType: .rtf),
+           let attr = try? NSAttributedString(
+               data: rtfData,
+               options: [.documentType: NSAttributedString.DocumentType.rtf],
+               documentAttributes: nil
+           ) {
+            let s = attr.string.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !s.isEmpty { return s }
+        }
+        return nil
+    }
+
+    private func captureSelectedTextViaAccessibility() -> String? {
+        let system = AXUIElementCreateSystemWide()
+        var focusedObj: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute as CFString, &focusedObj) == .success,
+              let focusedObj else {
+            return nil
+        }
+        let focused = focusedObj as! AXUIElement
+
+        var selectedObj: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(focused, kAXSelectedTextAttribute as CFString, &selectedObj) == .success,
+              let selectedObj else {
+            return nil
+        }
+        return selectedObj as? String
+    }
+
+    private func replaceSelectedText(with text: String) async {
+        guard !text.isEmpty else { return }
+
+        if replaceSelectedTextViaAccessibility(text) {
+            return
+        }
+
+        // Wait for user to release modifiers before pasting
+        await waitForModifiersRelease()
+
+        let pasteboard = NSPasteboard.general
+        let previous = pasteboard.string(forType: .string)
+
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+
+        sendCommandShortcut(CGKeyCode(kVK_ANSI_V))
+        try? await Task.sleep(nanoseconds: 140_000_000)
+
+        if let previous {
+            pasteboard.clearContents()
+            pasteboard.setString(previous, forType: .string)
+        }
+    }
+
+    private func sendCommandShortcut(_ keyCode: CGKeyCode) {
+        guard let source = CGEventSource(stateID: .combinedSessionState),
+              let keyDown = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: true),
+              let keyUp = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: false) else {
+            return
+        }
+        keyDown.flags = .maskCommand
+        keyUp.flags = .maskCommand
+        keyDown.post(tap: .cghidEventTap)
+        keyUp.post(tap: .cghidEventTap)
+    }
+
+    private func replaceSelectedTextViaAccessibility(_ replacement: String) -> Bool {
+        let system = AXUIElementCreateSystemWide()
+        var focusedObj: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute as CFString, &focusedObj) == .success,
+              let focusedObj else {
+            return false
+        }
+        let focused = focusedObj as! AXUIElement
+
+        let result = AXUIElementSetAttributeValue(
+            focused,
+            kAXSelectedTextAttribute as CFString,
+            replacement as CFTypeRef
+        )
+        return result == .success
+    }
+
+    private func resolvedHotkeyTargetAgent() -> Agent? {
+        guard let id = defaultExteriorAgentId ?? agents.first?.id else { return nil }
+        return agents.first { $0.id == id }
+    }
+
+    private func ensureHotkeyConversation(agentId: UUID) -> UUID {
+        if let savedId = UUID(uuidString: hotkeyConversationIdString),
+           conversations.contains(where: { $0.id == savedId }) {
+            return savedId
+        }
+
+        if let existing = conversations.first(where: { ($0.title ?? "") == "Hotkey Space" }) {
+            hotkeyConversationIdString = existing.id.uuidString
+            return existing.id
+        }
+
+        let conv = Conversation(title: "Hotkey Space", participantIds: [agentId])
+        conversations.insert(conv, at: 0)
+        hotkeyConversationIdString = conv.id.uuidString
+        return conv.id
+    }
+
+    private func rewriteTextStreaming(
+        _ text: String,
+        action: TextAssistAction,
+        agent: Agent,
+        conversationId: UUID
+    ) async throws -> String {
+        guard let convIndex = conversations.firstIndex(where: { $0.id == conversationId }) else {
+            throw NSError(domain: "LumiAgent", code: 2, userInfo: [NSLocalizedDescriptionKey: "Hotkey conversation not found"])
+        }
+
+        let userDisplay = "Hotkey \(action.title):\n\n\(text)"
+        conversations[convIndex].messages.append(SpaceMessage(role: .user, content: userDisplay))
+        conversations[convIndex].updatedAt = Date()
+
+        let placeholderId = UUID()
+        conversations[convIndex].messages.append(
+            SpaceMessage(id: placeholderId, role: .agent, content: "", agentId: agent.id, isStreaming: true)
+        )
+
+        let docContext = await buildFrontmostDocumentContext()
+        let prompt = """
+        \(action.instruction)
+
+        \(docContext)
+
+        Text:
+        \"\"\"
+        \(text)
+        \"\"\"
+        """
+
+        let repo = AIProviderRepository()
+        let stream = try await repo.sendMessageStream(
+            provider: agent.configuration.provider,
+            model: agent.configuration.model,
+            messages: [AIMessage(role: .user, content: prompt)],
+            systemPrompt: "You are a precise writing assistant. Output plain text only.",
+            tools: [],
+            temperature: 0.2,
+            maxTokens: 1200
+        )
+
+        var accumulated = ""
+        for try await chunk in stream {
+            if let content = chunk.content, !content.isEmpty {
+                accumulated += content
+                if let ci = conversations.firstIndex(where: { $0.id == conversationId }),
+                   let mi = conversations[ci].messages.firstIndex(where: { $0.id == placeholderId }) {
+                    conversations[ci].messages[mi].content = accumulated
+                }
+            }
+        }
+
+        if let ci = conversations.firstIndex(where: { $0.id == conversationId }),
+           let mi = conversations[ci].messages.firstIndex(where: { $0.id == placeholderId }) {
+            conversations[ci].messages[mi].isStreaming = false
+            conversations[ci].updatedAt = Date()
+        }
+        return accumulated.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     func toggleCommandPalette() {
@@ -391,16 +864,28 @@ class AppState: ObservableObject {
 
             // Detect active app and gather iWork context if applicable
             let (prompt, _) = await buildQuickActionPrompt(type: type)
+            let finalPrompt = type == .cleanDesktop ? buildDesktopCleanupPrompt(basePrompt: prompt) : prompt
 
             guard let convIndex = conversations.firstIndex(where: { $0.id == convId }) else { return }
 
-            let userMsg = SpaceMessage(role: .user, content: prompt, imageData: jpeg)
+            let userMsg = SpaceMessage(role: .user, content: finalPrompt, imageData: jpeg)
             conversations[convIndex].messages.append(userMsg)
             conversations[convIndex].updatedAt = Date()
 
             let history = conversations[convIndex].messages.filter { !$0.isStreaming }
+            let allowlist: Set<String>? = {
+                guard type == .cleanDesktop else { return nil }
+                return [
+                    "list_directory",
+                    "get_file_info",
+                    "create_directory",
+                    "move_file",
+                    "copy_file"
+                ]
+            }()
             await streamResponse(from: targetAgent, in: convId,
-                                 history: history, agentMode: true)
+                                 history: history, agentMode: true,
+                                 toolNameAllowlist: allowlist)
         }
     }
 
@@ -416,6 +901,69 @@ class AppState: ObservableObject {
         }
 
         return (type.prompt, nil)
+    }
+
+    private func buildDesktopCleanupPrompt(basePrompt: String) -> String {
+        let desktopURL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Desktop")
+        let inventory = desktopInventory(at: desktopURL, maxItems: 250)
+        return """
+        \(basePrompt)
+
+        ═══ SAFETY MODE: DESKTOP CLEANUP ═══
+        Goal: tidy the Desktop safely.
+
+        HARD RULES (DO NOT BREAK):
+        1. NEVER delete anything. No destructive operations.
+        2. NEVER move directories/folders. Only move loose files.
+        3. NEVER modify file contents.
+        4. NEVER move files that look like code/project assets:
+           - extensions: .swift .xcodeproj .xcworkspace .py .js .ts .tsx .jsx .go .rs .java .kt .c .cpp .h .hpp .rb .php .sh
+           - names containing: README, LICENSE, Dockerfile, Makefile, Package.swift, package.json, pyproject.toml, go.mod, Cargo.toml
+        5. If uncertain, leave file in place and report.
+
+        Allowed organization pattern:
+        - Move loose files into Desktop subfolders such as:
+          Images, Documents, PDFs, Archives, Audio, Video, Screenshots, Others
+        - Preserve filenames exactly.
+
+        Available tools are restricted by policy for this action.
+
+        Desktop path: \(desktopURL.path)
+
+        Current Desktop inventory:
+        \(inventory)
+
+        Return a concise summary of what was moved and what was intentionally left untouched.
+        """
+    }
+
+    private func desktopInventory(at directory: URL, maxItems: Int) -> String {
+        let fm = FileManager.default
+        guard let urls = try? fm.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: [.isDirectoryKey, .fileSizeKey, .contentModificationDateKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            return "(Could not read Desktop contents)"
+        }
+
+        let sorted = urls.sorted { $0.lastPathComponent.localizedCaseInsensitiveCompare($1.lastPathComponent) == .orderedAscending }
+        let slice = sorted.prefix(maxItems)
+        let formatter = ByteCountFormatter()
+        formatter.countStyle = .file
+
+        let lines = slice.map { url -> String in
+            let vals = try? url.resourceValues(forKeys: [.isDirectoryKey, .fileSizeKey, .contentModificationDateKey])
+            let isDir = vals?.isDirectory == true
+            let sizeText = isDir ? "-" : formatter.string(fromByteCount: Int64(vals?.fileSize ?? 0))
+            let dateText = vals?.contentModificationDate?.formatted(date: .abbreviated, time: .shortened) ?? "unknown"
+            return "- \(url.lastPathComponent) | \(isDir ? "folder" : "file") | size: \(sizeText) | modified: \(dateText)"
+        }
+
+        if sorted.count > maxItems {
+            return lines.joined(separator: "\n") + "\n- ... and \(sorted.count - maxItems) more items"
+        }
+        return lines.isEmpty ? "(Desktop is empty)" : lines.joined(separator: "\n")
     }
 
     /// Get the bundle identifier of the frontmost application.
@@ -604,6 +1152,14 @@ class AppState: ObservableObject {
             \(contentSection)
 
             Fix all issues you find automatically.
+            """
+
+        case .cleanDesktop:
+            return """
+            \(docInfo)
+
+            The user requested Desktop cleanup. Ignore the current document content and focus only on safe Desktop organization.
+            Do not edit documents in the active app.
             """
         }
     }
@@ -829,7 +1385,15 @@ class AppState: ObservableObject {
         screenControlTasks.append(task)
     }
 
-    private func streamResponse(from agent: Agent, in conversationId: UUID, history: [SpaceMessage], agentMode: Bool = false, desktopControlEnabled: Bool = false, delegationDepth: Int = 0) async {
+    private func streamResponse(
+        from agent: Agent,
+        in conversationId: UUID,
+        history: [SpaceMessage],
+        agentMode: Bool = false,
+        desktopControlEnabled: Bool = false,
+        delegationDepth: Int = 0,
+        toolNameAllowlist: Set<String>? = nil
+    ) async {
         guard let index = conversations.firstIndex(where: { $0.id == conversationId }) else { return }
 
         // Only raise the screen-control flag when a screen tool is actually called,
@@ -897,6 +1461,9 @@ class AppState: ObservableObject {
         #else
         tools = []
         #endif
+        if let allowlist = toolNameAllowlist {
+            tools = tools.filter { allowlist.contains($0.name) }
+        }
 
         // In a group chat, prepend context so each agent knows who else is present
         let effectiveSystemPrompt: String? = {
@@ -1274,6 +1841,7 @@ class AppState: ObservableObject {
 enum SidebarItem: String, CaseIterable, Identifiable {
     case agents     = "Agents"
     case agentSpace = "Agent Space"
+    case hotkeySpace = "Hotkey Space"
     case health     = "Health"
     case history    = "History"
     case automation = "Automations"
@@ -1285,6 +1853,7 @@ enum SidebarItem: String, CaseIterable, Identifiable {
         switch self {
         case .agents:     return "cpu"
         case .agentSpace: return "bubble.left.and.bubble.right.fill"
+        case .hotkeySpace: return "keyboard"
         case .health:     return "heart.fill"
         case .history:    return "clock.arrow.circlepath"
         case .automation: return "bolt.horizontal"

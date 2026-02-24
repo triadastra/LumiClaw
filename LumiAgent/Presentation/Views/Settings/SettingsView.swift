@@ -19,6 +19,12 @@ struct SettingsView: View {
             PermissionsTab()
                 .tabItem { Label("Permissions", systemImage: "lock.shield.fill") }
 
+            IntegrationsTab()
+                .tabItem { Label("Integrations", systemImage: "slider.horizontal.3") }
+
+            HotkeysTab()
+                .tabItem { Label("Hotkeys", systemImage: "keyboard") }
+
             SecurityTab()
                 .tabItem { Label("Security", systemImage: "shield.fill") }
 
@@ -27,6 +33,10 @@ struct SettingsView: View {
         }
         .frame(width: 560, height: 520)
     }
+}
+
+extension Notification.Name {
+    static let lumiGlobalHotkeysPreferenceChanged = Notification.Name("lumiGlobalHotkeysPreferenceChanged")
 }
 
 // MARK: - Permissions Tab
@@ -563,6 +573,76 @@ struct APIKeysTab: View {
 }
 
 // MARK: - Security Tab
+
+struct IntegrationsTab: View {
+    @AppStorage("settings.enableSystemServices") private var enableSystemServices = true
+    @AppStorage("settings.enableGlobalHotkeys") private var enableGlobalHotkeys = true
+
+    var body: some View {
+        Form {
+            Section("macOS Services") {
+                Toggle("Enable Lumi Services", isOn: $enableSystemServices)
+                Text("Adds Lumi actions to the macOS Services menu for selected text and safe desktop cleanup.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Global Shortcuts") {
+                Toggle("Enable Global Hotkeys", isOn: $enableGlobalHotkeys)
+                    .onChange(of: enableGlobalHotkeys) {
+                        NotificationCenter.default.post(name: .lumiGlobalHotkeysPreferenceChanged, object: nil)
+                    }
+                Text("When enabled, Lumi captures global shortcuts even while other apps are focused.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+    }
+}
+
+struct HotkeysTab: View {
+    @AppStorage("settings.enableGlobalHotkeys") private var enableGlobalHotkeys = true
+
+    private let shortcuts: [(keys: String, action: String)] = [
+        ("⌘L", "Open Agent Palette"),
+        ("⌃L", "Open Agent Palette (secondary)"),
+        ("⌥⌘L", "Open Quick Actions"),
+        ("⌥⌘E", "Extend selected text"),
+        ("⌥⌘G", "Correct grammar on selected text"),
+        ("⌥⌘R", "Auto-resolve selected text")
+    ]
+
+    var body: some View {
+        Form {
+            Section("Status") {
+                HStack {
+                    Circle()
+                        .fill(enableGlobalHotkeys ? Color.green : Color.orange)
+                        .frame(width: 10, height: 10)
+                    Text(enableGlobalHotkeys ? "Global hotkeys enabled" : "Global hotkeys disabled")
+                        .font(.system(size: 13, weight: .medium))
+                }
+            }
+
+            Section("Shortcut Reference") {
+                ForEach(shortcuts, id: \.keys) { row in
+                    HStack {
+                        Text(row.action)
+                        Spacer()
+                        Text(row.keys)
+                            .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Color.secondary.opacity(0.12))
+                            .clipShape(RoundedRectangle(cornerRadius: 6))
+                    }
+                }
+            }
+        }
+        .formStyle(.grouped)
+    }
+}
 
 struct SecurityTab: View {
     @AppStorage("settings.allowSudo") private var allowSudo = false

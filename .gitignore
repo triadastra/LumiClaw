@@ -42,6 +42,9 @@ fastlane/test_output
 # Code Injection
 iOSInjectionProject/
 
+# Claude Code
+.claude/
+
 # macOS
 .DS_Store
 .AppleDouble
