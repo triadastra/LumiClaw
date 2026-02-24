@@ -62,11 +62,11 @@ enum QuickActionType: String, CaseIterable {
     var prompt: String {
         switch self {
         case .analyzePage:
-            return "Describe what's on this screen"
+            return "Analyze the content and structure of what's currently displayed on the screen."
         case .thinkAndWrite:
-            return "Look at this screen, find the active text field, and write an appropriate response using type_text"
+            return "Review the current content and write an appropriate response or continuation."
         case .writeNew:
-            return "Look at this page and write appropriate new content using type_text"
+            return "Create and add new content that would be appropriate for this document."
         }
     }
 

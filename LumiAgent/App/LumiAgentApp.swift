@@ -341,6 +341,9 @@ class AppState: ObservableObject {
                 }
             }.value
 
+            // Detect active app and gather iWork context if applicable
+            let (prompt, _) = await buildQuickActionPrompt(type: type)
+
             // Find or create DM (updates conversation list but doesn't navigate to it)
             let convId: UUID
             if let existing = conversations.first(where: { !$0.isGroup && $0.participantIds == [targetAgent.id] }) {
@@ -353,13 +356,136 @@ class AppState: ObservableObject {
 
             guard let convIndex = conversations.firstIndex(where: { $0.id == convId }) else { return }
 
-            let userMsg = SpaceMessage(role: .user, content: type.prompt, imageData: jpeg)
+            let userMsg = SpaceMessage(role: .user, content: prompt, imageData: jpeg)
             conversations[convIndex].messages.append(userMsg)
             conversations[convIndex].updatedAt = Date()
 
             let history = conversations[convIndex].messages.filter { !$0.isStreaming }
             await streamResponse(from: targetAgent, in: convId,
                                  history: history, agentMode: true)
+        }
+    }
+
+    /// Build smart prompt for Quick Action, detecting iWork apps and gathering context.
+    private func buildQuickActionPrompt(type: QuickActionType) async -> (String, String?) {
+        let activeApp = getActiveApplication()
+
+        if isIWorkApp(bundleId: activeApp) {
+            let docInfo = await getIWorkDocumentInfo()
+            let iworkContext = buildIWorkContext(app: activeApp, docInfo: docInfo, actionType: type)
+            let enhancedPrompt = type.prompt + "\n\n" + iworkContext
+            return (enhancedPrompt, iworkContext)
+        }
+
+        return (type.prompt, nil)
+    }
+
+    /// Get the bundle identifier of the frontmost application.
+    private func getActiveApplication() -> String {
+        let workspace = NSWorkspace.shared
+        if let frontmost = workspace.frontmostApplication {
+            return frontmost.bundleIdentifier ?? ""
+        }
+        return ""
+    }
+
+    /// Check if a bundle ID is an iWork app.
+    private func isIWorkApp(bundleId: String) -> Bool {
+        let iworkBundleIds = [
+            "com.apple.iWork.Pages",
+            "com.apple.iWork.Numbers",
+            "com.apple.iWork.Keynote",
+            "com.apple.creativestudio.keynote",  // New Keynote
+        ]
+        return iworkBundleIds.contains(bundleId)
+    }
+
+    /// Get info about the active iWork document.
+    private func getIWorkDocumentInfo() async -> String {
+        let script = """
+        tell application "System Events"
+            set frontmostApp to name of (first application process whose frontmost is true)
+        end tell
+
+        if frontmostApp contains "Pages" then
+            tell application "Pages"
+                if (count of documents) > 0 then
+                    set activeDoc to document 1
+                    set docName to name of activeDoc
+                    return "Document: " & docName
+                else
+                    return "No active Pages document"
+                end if
+            end tell
+        else if frontmostApp contains "Numbers" then
+            tell application "Numbers"
+                if (count of documents) > 0 then
+                    set activeDoc to document 1
+                    set docName to name of activeDoc
+                    return "Spreadsheet: " & docName
+                else
+                    return "No active Numbers document"
+                end if
+            end tell
+        else if frontmostApp contains "Keynote" then
+            tell application "Keynote"
+                if (count of presentations) > 0 then
+                    set activePresentation to presentation 1
+                    set docName to name of activePresentation
+                    return "Presentation: " & docName
+                else
+                    return "No active Keynote presentation"
+                end if
+            end tell
+        else
+            return "Unknown iWork app"
+        end if
+        """
+
+        do {
+            return try await ScreenControlTools.runAppleScript(script: script)
+        } catch {
+            return "Could not get iWork document info"
+        }
+    }
+
+    /// Build iWork-specific context message for the agent.
+    private func buildIWorkContext(app: String, docInfo: String, actionType: QuickActionType) -> String {
+        let appName = app.contains("Keynote") ? "Keynote" :
+                     app.contains("Numbers") ? "Numbers" : "Pages"
+
+        switch actionType {
+        case .analyzePage:
+            return """
+            You are working with \(appName). \(docInfo)
+            Analyze the document content and structure shown in the screenshot.
+            """
+
+        case .thinkAndWrite:
+            return """
+            You are working with \(appName). \(docInfo)
+            Look at the document, understand its current content and structure, then:
+            1. Analyze the context and what should be added or modified
+            2. Use iwork_write_text tool to add new content at the cursor
+            3. Or use iwork_replace_text to modify existing text if needed
+            4. Or use iwork_insert_after_anchor to add content at specific locations
+
+            IMPORTANT: Use the iWork tools (iwork_write_text, iwork_replace_text, iwork_insert_after_anchor)
+            to directly manipulate the document. This is more reliable than mouse/keyboard control.
+            """
+
+        case .writeNew:
+            return """
+            You are working with \(appName). \(docInfo)
+            The user wants you to create new content for this document.
+
+            Use the iWork tools to add content:
+            - iwork_write_text: Write new text to the document
+            - iwork_insert_after_anchor: Find a specific location and add content after it
+            - iwork_replace_text: Replace specific text if needed
+
+            Suggest improvements to the document structure and use the iWork tools to implement them.
+            """
         }
     }
     #endif
